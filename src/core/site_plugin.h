@@ -210,6 +210,12 @@ namespace sm
         std::string masterUrl() const;
         void setMasterUrl(const std::string &url);
 
+        // ── External recorder (N_m3u8DL-RE) ─────────────────────────
+        // Sites can override this to opt into using N_m3u8DL-RE instead
+        // of the built-in FFmpeg recorder. Returns true if the site
+        // prefers the external tool (when available). Default: false.
+        virtual bool preferExternalRecorder() const { return false; }
+
         // ── Bulk update support ─────────────────────────────────────
         virtual bool supportsBulkUpdate() const { return false; }
 

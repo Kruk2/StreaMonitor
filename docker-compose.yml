@@ -11,7 +11,9 @@ services:
       - /home/ubuntu/apps/chatturbate2/downloads:/app/downloads
       - /home/ubuntu/apps/chatturbate2/config:/app/config
     environment:
+      - STRMNTR_CONFIG_DIR=/app/config
       - STRMNTR_DOWNLOAD_DIR=/app/downloads
       - STRMNTR_HOST=0.0.0.0
       - STRMNTR_PORT=5000
       - STRMNTR_WEB_ENABLED=true
+      - STRMNTR_N_M3U8DL_PATH=/usr/local/bin/N_m3u8DL-RE

@@ -33,8 +33,8 @@ WORKDIR /src
 # Skip debug builds — release only (halves vcpkg build time)
 ENV VCPKG_OVERLAY_TRIPLETS=/src/triplets
 RUN mkdir -p /src/triplets \
-    && cp /opt/vcpkg/triplets/community/arm64-linux.cmake /src/triplets/ \
-    && echo 'set(VCPKG_BUILD_TYPE release)' >> /src/triplets/arm64-linux.cmake
+    && printf 'set(VCPKG_TARGET_ARCHITECTURE arm64)\nset(VCPKG_CRT_LINKAGE dynamic)\nset(VCPKG_LIBRARY_LINKAGE static)\nset(VCPKG_CMAKE_SYSTEM_NAME Linux)\nset(VCPKG_BUILD_TYPE release)\n' \
+       > /src/triplets/arm64-linux.cmake
 
 # Install vcpkg dependencies first (cached unless vcpkg.json changes)
 COPY vcpkg.json ./
@@ -64,14 +64,23 @@ RUN cmake -G Ninja \
 
 RUN ninja -C build
 
+# ── Stage 3a: Get musl-compatible OpenSSL for N_m3u8DL-RE ────────
+FROM alpine:3.18 AS alpine-libs
+RUN apk add --no-cache libssl3 libcrypto3
+
 # ── Stage 3: Runtime image ────────────────────────────────────────
 FROM ubuntu:22.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
+    ca-certificates curl musl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy musl-compatible OpenSSL libs (glibc libssl won't work with musl binary)
+COPY --from=alpine-libs /usr/lib/libssl.so* /usr/lib/musl-ssl/
+COPY --from=alpine-libs /usr/lib/libcrypto.so* /usr/lib/musl-ssl/
+RUN echo '/usr/lib/musl-ssl' > /etc/ld-musl-aarch64.path
 
 RUN useradd -m -s /bin/bash streamon
 
@@ -79,6 +88,20 @@ WORKDIR /app
 
 COPY --from=cpp-builder /src/build/StreaMonitor ./StreaMonitor
 COPY --from=web-builder /src/web ./web/
+
+# Install N_m3u8DL-RE (external HLS recorder for Chaturbate)
+ARG N_M3U8DL_VERSION=v0.5.1-beta
+ARG N_M3U8DL_DATE=20251029
+RUN curl -fSL "https://github.com/nilaoda/N_m3u8DL-RE/releases/download/${N_M3U8DL_VERSION}/N_m3u8DL-RE_${N_M3U8DL_VERSION}_linux-musl-arm64_${N_M3U8DL_DATE}.tar.gz" \
+    -o /tmp/nm3u8dl.tar.gz \
+    && mkdir -p /tmp/nm3u8dl \
+    && tar xzf /tmp/nm3u8dl.tar.gz -C /tmp/nm3u8dl \
+    && ls -la /tmp/nm3u8dl/ \
+    && find /tmp/nm3u8dl -type f -name 'N_m3u8DL-RE*' -exec cp {} /usr/local/bin/N_m3u8DL-RE \; \
+    && chmod +x /usr/local/bin/N_m3u8DL-RE \
+    && mkdir -p /usr/local/bin/Logs && chmod 777 /usr/local/bin/Logs \
+    && /usr/local/bin/N_m3u8DL-RE --version \
+    && rm -rf /tmp/nm3u8dl /tmp/nm3u8dl.tar.gz
 
 # /app/config is the persistent volume for config.json, app_config.json, logs, crashes
 # /app/downloads is the persistent volume for recordings

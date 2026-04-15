@@ -995,7 +995,7 @@ namespace sm
                 }
 
                 // Save config after applying changes
-                config_.saveToFile("app_config.json");
+                config_.saveToFile(config_.configDir / "app_config.json");
                 manager_.saveConfig();
 
                 jsonResponse(res, {{"success", true}, {"message", "Config updated"}});

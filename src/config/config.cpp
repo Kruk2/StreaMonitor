@@ -108,6 +108,16 @@ namespace sm
             return;
         }
 
+        // Skip empty files (e.g. first boot with Docker volume)
+        {
+            std::error_code ec;
+            if (std::filesystem::file_size(path, ec) == 0 && !ec)
+            {
+                spdlog::info("Config file is empty, starting fresh: {}", path.string());
+                return;
+            }
+        }
+
         // Try loading from the primary config file
         if (tryLoadFrom_(path))
         {
@@ -413,11 +423,13 @@ namespace sm
 
     void AppConfig::loadFromEnv()
     {
+        configDir = getEnv("STRMNTR_CONFIG_DIR", configDir.string());
         downloadsDir = getEnv("STRMNTR_DOWNLOAD_DIR", downloadsDir.string());
         container = parseContainerFormat(getEnv("STRMNTR_CONTAINER", "mkv"));
         wantedResolution = getEnvInt("STRMNTR_RESOLUTION", wantedResolution);
         ffmpegReadRate = getEnvBool("STRMNTR_FFMPEG_READRATE", ffmpegReadRate);
         ffmpegPath = getEnv("STRMNTR_FFMPEG_PATH", ffmpegPath.string());
+        n_m3u8dlPath = getEnv("STRMNTR_N_M3U8DL_PATH", n_m3u8dlPath.string());
         userAgent = getEnv("STRMNTR_USER_AGENT", userAgent);
         verifySsl = getEnvBool("STRMNTR_VERIFY_SSL", verifySsl);
         webHost = getEnv("STRMNTR_HOST", webHost);
@@ -481,6 +493,9 @@ namespace sm
     {
         if (!std::filesystem::exists(path))
             return;
+        // Skip empty files (e.g. first boot with Docker volume)
+        if (std::filesystem::file_size(path) == 0)
+            return;
         try
         {
             std::ifstream f(path);
@@ -493,6 +508,8 @@ namespace sm
                 wantedResolution = j["resolution"];
             if (j.contains("ffmpeg_path"))
                 ffmpegPath = j["ffmpeg_path"].get<std::string>();
+            if (j.contains("n_m3u8dl_path"))
+                n_m3u8dlPath = j["n_m3u8dl_path"].get<std::string>();
             if (j.contains("user_agent"))
                 userAgent = j["user_agent"];
             if (j.contains("verify_ssl"))
@@ -675,6 +692,7 @@ namespace sm
                                                                                                           : "mkv";
         j["resolution"] = wantedResolution;
         j["ffmpeg_path"] = ffmpegPath.string();
+        j["n_m3u8dl_path"] = n_m3u8dlPath.string();
         j["user_agent"] = userAgent;
         j["verify_ssl"] = verifySsl;
         j["minimize_to_tray"] = minimizeToTray;

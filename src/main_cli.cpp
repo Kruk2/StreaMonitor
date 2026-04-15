@@ -253,7 +253,7 @@ try
     config.loadFromEnv();
 
     // Load persisted app settings (overrides env where set)
-    std::filesystem::path appConfigPath = "app_config.json";
+    std::filesystem::path appConfigPath = config.configDir / "app_config.json";
     if (std::filesystem::exists(appConfigPath))
     {
         config.loadFromFile(appConfigPath);
@@ -275,7 +275,7 @@ try
     }
 
     sm::ModelConfigStore configStore;
-    std::filesystem::path configPath = "config.json";
+    std::filesystem::path configPath = config.configDir / "config.json";
     // Always call load() so lastPath_ is set for subsequent save() calls,
     // even if the file doesn't exist yet (first launch). (Fixes #46)
     configStore.load(configPath);

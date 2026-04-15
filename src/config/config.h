@@ -18,9 +18,11 @@ namespace sm
     struct AppConfig
     {
         // Paths
+        std::filesystem::path configDir = ".";
         std::filesystem::path downloadsDir = "downloads";
         std::filesystem::path configFile = "config.json";
         std::filesystem::path ffmpegPath = "ffmpeg";
+        std::filesystem::path n_m3u8dlPath = "N_m3u8DL-RE"; // N_m3u8DL-RE binary (empty = disabled)
 
         // Recording
         ContainerFormat container = ContainerFormat::MKV;

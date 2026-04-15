@@ -26,6 +26,7 @@ namespace sm
             return "https://roomimg.stream.highwebmedia.com/ri/" + username() + ".jpg";
         }
         bool supportsBulkUpdate() const override { return true; }
+        bool preferExternalRecorder() const override { return true; }
 
         std::pair<std::string, std::vector<std::string>> getSiteColor() const override
         {

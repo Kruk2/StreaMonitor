@@ -10,6 +10,7 @@
 
 #include "core/site_plugin.h"
 #include "core/bot_manager.h"
+#include "downloaders/n_m3u8dl_recorder.h"
 #include "gui/imgui_log_sink.h"
 #include "utils/thumbnail_generator.h"
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -1480,6 +1481,47 @@ namespace sm
         std::string outputPath = generateOutputPath(config);
         logger_->info("Started downloading show → {}", outputPath);
 
+        // ── Try N_m3u8DL-RE external recorder if site prefers it ────
+        if (preferExternalRecorder() &&
+            NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string()))
+        {
+            logger_->info("Using N_m3u8DL-RE external recorder");
+            setRecording(true);
+
+            NM3U8DLRecorder extRecorder(config);
+            extRecorder.setLogger(logger_);
+
+            cancelToken_.reset();
+            auto extResult = extRecorder.record(videoUrl, outputPath, cancelToken_,
+                                                config.userAgent);
+
+            setRecording(false);
+
+            bool ok = extResult.success;
+            std::string finalPath = extResult.outputPath.empty() ? outputPath : extResult.outputPath;
+            ok = postDownloadCleanup(finalPath, ok);
+
+            if (ok)
+            {
+                std::error_code ec;
+                if (fs::exists(finalPath, ec))
+                {
+                    auto fileSize = fs::file_size(finalPath, ec);
+                    logger_->info("Recording ended successfully: {} ({} bytes)",
+                                  finalPath, fileSize);
+                    std::lock_guard lock(stateMutex_);
+                    state_.totalBytes += fileSize;
+                }
+            }
+            else
+            {
+                logger_->warn("Recording failed");
+            }
+
+            return ok;
+        }
+
+        // ── Built-in FFmpeg HLS recorder ─────────────────────────────
         setRecording(true);
 
         HLSRecorder recorder(config);
