@@ -89,9 +89,12 @@ namespace sm
         args.push_back("--tmp-dir");
         args.push_back((fs::path(outputDir) / ".tmp_nm3u8dl").string());
 
-        // Live pipe mux: pipes audio+video through ffmpeg in real-time,
-        // producing a single muxed file from the start (no post-processing).
-        // Requires RE_LIVE_PIPE_OPTIONS env var (set in record()).
+        // --live-pipe-mux forces LiveRealTimeMerge on, which preserves
+        // broadcast timestamps ensuring audio/video stay in sync.
+        // Combined with N_M3U8DL_NO_FFMPEG_PIPE=1 (set in record()), this
+        // bypasses the ffmpeg named-pipe approach that causes A/V desync
+        // and instead uses N_m3u8DL-RE's internal binary merger.
+        // (Reference: KFERMercer/ctbcap#54, ctbcap#56)
         args.push_back("--live-pipe-mux");
 
         // Thread count — use 4 for live to avoid overwhelming CDN
@@ -102,7 +105,7 @@ namespace sm
         args.push_back("--download-retry-count");
         args.push_back("5");
 
-        // Auto-select best streams (works with pipe mux for split A/V)
+        // Auto-select best streams
         args.push_back("--auto-select");
 
         // Delete temp files when done
@@ -117,6 +120,24 @@ namespace sm
         // Log level — keep INFO so we capture everything, but we filter on our side
         args.push_back("--log-level");
         args.push_back("INFO");
+
+        // Post-recording mux: remux binary-merged tracks into desired container.
+        // This runs AFTER recording completes (not during live stream).
+        std::string ext;
+        switch (config_.container)
+        {
+        case ContainerFormat::MP4:
+            ext = "mp4";
+            break;
+        case ContainerFormat::TS:
+            ext = "ts";
+            break;
+        default:
+            ext = "mkv";
+            break;
+        }
+        args.push_back("-M");
+        args.push_back("format=" + ext);
 
         // User agent
         if (!userAgent.empty())
@@ -163,9 +184,9 @@ namespace sm
                                     CancellationToken &cancel,
                                     const std::string &pipeEnv)
     {
-        // Set RE_LIVE_PIPE_OPTIONS for --live-pipe-mux
+        // Disable ffmpeg pipe to fix audio desync with split A/V streams
         if (!pipeEnv.empty())
-            SetEnvironmentVariableA("RE_LIVE_PIPE_OPTIONS", pipeEnv.c_str());
+            SetEnvironmentVariableA("N_M3U8DL_NO_FFMPEG_PIPE", pipeEnv.c_str());
 
         // Build command line string
         std::string cmdLine;
@@ -293,7 +314,7 @@ namespace sm
             dup2(pipefd[1], STDERR_FILENO);
             close(pipefd[1]);
             if (!pipeEnv.empty())
-                setenv("RE_LIVE_PIPE_OPTIONS", pipeEnv.c_str(), 1);
+                setenv("N_M3U8DL_NO_FFMPEG_PIPE", pipeEnv.c_str(), 1);
             execvp(argv[0], const_cast<char *const *>(argv.data()));
             _exit(127);
         }
@@ -409,23 +430,12 @@ namespace sm
 
         auto args = buildArgs(hlsUrl, outputDir, outputName, userAgent, headers);
 
-        // Build RE_LIVE_PIPE_OPTIONS for --live-pipe-mux
-        // N_m3u8DL-RE already adds: -c copy -ignore_unknown -copy_unknown
-        // We only add what's needed beyond those defaults.
-        // (Reference: ctbcap by KFERMercer)
-        std::string pipeOpts = "-copyts -start_at_zero"
-                               " -fflags +genpts+nobuffer";
-        switch (config_.container)
-        {
-        case ContainerFormat::MP4:
-            pipeOpts += " -movflags +frag_keyframe+empty_moov";
-            break;
-        default:
-            break;
-        }
-        // Quote the output path — it may contain spaces/brackets
-        pipeOpts += " \"" + outputPath + "\"";
-        log_->info("RE_LIVE_PIPE_OPTIONS={}", pipeOpts);
+        // N_M3U8DL_NO_FFMPEG_PIPE=1 disables the ffmpeg named-pipe
+        // approach that causes audio desync with split audio/video streams.
+        // N_m3u8DL-RE's internal binary merger preserves broadcast timestamps,
+        // then -M remuxes into the desired container after recording.
+        // (Fix for: KFERMercer/ctbcap#54, ctbcap#56)
+        std::string pipeEnvStr = "1";
 
         // Log the command
         {
@@ -439,7 +449,7 @@ namespace sm
             log_->info("N_m3u8DL-RE command: {}", cmdStr);
         }
 
-        int exitCode = runProcess(args, cancel, pipeOpts);
+        int exitCode = runProcess(args, cancel, pipeEnvStr);
 
         if (cancel.isCancelled())
         {
@@ -461,7 +471,7 @@ namespace sm
             result.error = "N_m3u8DL-RE exited with code " + std::to_string(exitCode);
         }
 
-        // With --live-pipe-mux, ffmpeg writes directly to outputPath
+        // Check expected output path first, then scan for alternatives
         if (fs::exists(outputPath, ec))
         {
             result.outputPath = outputPath;
