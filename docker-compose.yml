@@ -12,9 +12,13 @@ services:
     volumes:
       - /home/ubuntu/apps/chatturbate2/downloads:/app/downloads
       - /home/ubuntu/apps/chatturbate2/config:/app/config
+    env_file:
+      - path: .env
+        required: false
     environment:
       - STRMNTR_CONFIG_DIR=/app/config
       - STRMNTR_DOWNLOAD_DIR=/app/downloads
+      - STRMNTR_PROXY=${STRMNTR_PROXY:-}
       - STRMNTR_HOST=0.0.0.0
       - STRMNTR_PORT=5000
       - STRMNTR_WEB_ENABLED=true

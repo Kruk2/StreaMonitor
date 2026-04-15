@@ -51,6 +51,7 @@ namespace sm
                 plugin->setGender(model.gender);
             if (!model.country.empty())
                 plugin->setCountry(model.country);
+            plugin->setUseProxy(model.useProxy);
 
             // Configure HTTP + populate websiteUrl for table display
             plugin->configure(config_);
@@ -492,6 +493,18 @@ namespace sm
         oldPluginToDestroy.reset();
 
         emitEvent(ManagerEvent::BotStatusChanged, newUsername + "_" + SiteRegistry::instance().nameToSlug(newSite.empty() ? oldSite : newSite));
+        return true;
+    }
+
+    bool BotManager::setUseProxy(const std::string &username, const std::string &site, bool useProxy)
+    {
+        std::lock_guard lock(mutex_);
+        auto *bot = findBot(username, site);
+        if (!bot)
+            return false;
+        bot->setUseProxy(useProxy);
+        configStore_.setUseProxy(username, site, useProxy);
+        configStore_.save();
         return true;
     }
 

@@ -23,6 +23,8 @@ namespace sm
             j["country"] = m.country;
         if (!m.crossRegisterGroup.empty())
             j["crossRegisterGroup"] = m.crossRegisterGroup;
+        if (m.useProxy)
+            j["useProxy"] = true;
         // VR config (only persist if it's a VR model)
         if (m.vrConfig.isVR())
         {
@@ -78,6 +80,7 @@ namespace sm
             j.at("country").get_to(m.country);
         if (j.contains("crossRegisterGroup"))
             j.at("crossRegisterGroup").get_to(m.crossRegisterGroup);
+        m.useProxy = j.value("useProxy", false);
         // VR config
         if (j.contains("vr") && j["vr"].is_object())
         {
@@ -352,6 +355,16 @@ namespace sm
         {
             if (m.username == username && (site.empty() || m.site == site))
                 m.crossRegisterGroup = groupName;
+        }
+    }
+
+    void ModelConfigStore::setUseProxy(const std::string &username, const std::string &site, bool useProxy)
+    {
+        std::lock_guard lock(mutex_);
+        for (auto &m : models_)
+        {
+            if (m.username == username && (site.empty() || m.site == site))
+                m.useProxy = useProxy;
         }
     }
 

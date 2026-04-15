@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   getStatus, getModels, getSites, getDiskUsage, getGroups, getLogs, getConfig,
-  addModel, removeModel, startModel, stopModel, restartModel,
+  addModel, removeModel, startModel, stopModel, restartModel, setModelProxy,
   startAll, stopAll, saveConfig, updateConfig, checkAuth, logout, isAuthenticated,
   createGroup, deleteGroup, startGroup, stopGroup, addGroupMember, removeGroupMember,
   updateCredentials,
@@ -335,6 +335,18 @@ function ModelDetailModal({ bot, onClose, onAction }: {
                 <p className="text-xs text-[var(--text-secondary)] font-mono truncate">{bot.recording_stats.currentFile}</p>
               </div>
             )}
+
+            <div className="flex items-center justify-between bg-[var(--bg-primary)] rounded-xl p-3 border border-[var(--border-subtle)]">
+              <div>
+                <div className="text-sm font-medium">Use Proxy</div>
+                <div className="text-[10px] text-[var(--text-dim)]">Route traffic through configured proxy</div>
+              </div>
+              <button
+                onClick={() => onAction(() => setModelProxy(bot.username, bot.siteSlug, !bot.useProxy))}
+                className={`relative w-11 h-6 rounded-full transition-colors ${bot.useProxy ? 'bg-emerald-500' : 'bg-zinc-600'}`}>
+                <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${bot.useProxy ? 'translate-x-[22px]' : 'translate-x-[2px]'}`} />
+              </button>
+            </div>
 
             <div className="flex gap-2 flex-wrap">
               {bot.recording && (

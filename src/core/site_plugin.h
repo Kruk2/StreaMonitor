@@ -98,6 +98,8 @@ namespace sm
         TimePoint startTime;
         RecordingStats recordingStats;
 
+        bool useProxy = false;
+
         // Error/debug info for inspection
         std::string lastError;       // Last error message
         std::string lastApiResponse; // Last API JSON response (for debugging)
@@ -149,6 +151,7 @@ namespace sm
         // ── Config ──────────────────────────────────────────────────
         void setGender(Gender g);
         void setCountry(const std::string &c);
+        void setUseProxy(bool v);
         void setRoomId(const std::string &rid);
         void setUsername(const std::string &newUsername); // for redirect updates
 

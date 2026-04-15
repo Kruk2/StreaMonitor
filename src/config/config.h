@@ -171,6 +171,7 @@ namespace sm
                            bool running);
         void setCrossRegisterGroup(const std::string &username, const std::string &site,
                                    const std::string &groupName);
+        void setUseProxy(const std::string &username, const std::string &site, bool useProxy);
 
         std::vector<ModelConfig> getAll() const;
         std::optional<ModelConfig> find(const std::string &username,

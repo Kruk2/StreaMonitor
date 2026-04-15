@@ -142,8 +142,8 @@ namespace sm
         http_.setDefaultTimeout(config.httpTimeoutSec);
         http_.setVerifySsl(config.verifySsl);
 
-        // Apply proxy from pool (first available)
-        if (config.proxyEnabled && !config.proxies.empty())
+        // Apply proxy from pool only if per-model useProxy is enabled
+        if (state_.useProxy && config.proxyEnabled && !config.proxies.empty())
         {
             proxyPool_.setProxies(config.proxies);
             proxyPool_.setMaxFailuresBeforeDisable(config.proxyMaxFailures);
@@ -189,8 +189,8 @@ namespace sm
         http_.setDefaultTimeout(config.httpTimeoutSec);
         http_.setVerifySsl(config.verifySsl);
 
-        // Apply proxy from pool
-        if (config.proxyEnabled && !config.proxies.empty())
+        // Apply proxy from pool only if per-model useProxy is enabled
+        if (state_.useProxy && config.proxyEnabled && !config.proxies.empty())
         {
             proxyPool_.setProxies(config.proxies);
             proxyPool_.setMaxFailuresBeforeDisable(config.proxyMaxFailures);
@@ -348,6 +348,12 @@ namespace sm
     {
         std::lock_guard lock(stateMutex_);
         state_.country = c;
+    }
+
+    void SitePlugin::setUseProxy(bool v)
+    {
+        std::lock_guard lock(stateMutex_);
+        state_.useProxy = v;
     }
 
     void SitePlugin::setRoomId(const std::string &rid)

@@ -39,6 +39,9 @@ compile_commands.json
 *.log
 build_log.txt
 
+# ── Secrets ──
+.env
+
 # ── User / runtime config ──
 app_config.json
 config.json

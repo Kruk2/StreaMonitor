@@ -133,6 +133,7 @@ namespace sm
         std::string country;
         std::string crossRegisterGroup; // Group name for multi-site tracking
         VRConfig vrConfig;              // Per-model VR metadata config
+        bool useProxy = false;          // Per-model proxy toggle
     };
 
     // ── Cross-register entry (links models across sites) ────────────

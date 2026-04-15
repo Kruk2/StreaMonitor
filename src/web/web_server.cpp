@@ -292,6 +292,7 @@ namespace sm
             {"currentFile", st.currentFile},
             {"uptimeSeconds", uptime},
             {"timeSinceStatusChange", sinceChange},
+            {"useProxy", st.useProxy},
             {"recording_stats", {{"bytesWritten", st.recordingStats.bytesWritten}, {"segmentsRecorded", st.recordingStats.segmentsRecorded}, {"stallsDetected", st.recordingStats.stallsDetected}, {"restartsPerformed", st.recordingStats.restartsPerformed}, {"currentSpeed", st.recordingStats.currentSpeed}, {"currentFile", st.recordingStats.currentFile}}}};
     }
 
@@ -592,6 +593,27 @@ namespace sm
                           else
                               jsonError(res, "Model not found", 404);
                       });
+
+        // ── PUT /api/models/:username/:site/proxy — Toggle proxy ──
+        server_->Put(R"(/api/models/([^/]+)/([^/]+)/proxy)",
+                     [this](const H2Request &req, H2Response &res)
+                     {
+                         if (!checkAuth(req, res))
+                             return;
+                         try
+                         {
+                             auto body = json::parse(req.body);
+                             bool useProxy = body.value("useProxy", false);
+                             if (manager_.setUseProxy(req.matches[1], req.matches[2], useProxy))
+                                 jsonResponse(res, {{"success", true}, {"useProxy", useProxy}});
+                             else
+                                 jsonError(res, "Model not found", 404);
+                         }
+                         catch (const std::exception &e)
+                         {
+                             jsonError(res, std::string("Invalid JSON: ") + e.what());
+                         }
+                     });
 
         // ── POST /api/start-all ───────────────────────────────────
         server_->Post("^/api/start-all$", [this](const H2Request &req, H2Response &res)

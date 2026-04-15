@@ -67,6 +67,7 @@ namespace sm
         bool restartBot(const std::string &username, const std::string &site = "");
         bool editBot(const std::string &oldUsername, const std::string &oldSite,
                      const std::string &newUsername, const std::string &newSite);
+        bool setUseProxy(const std::string &username, const std::string &site, bool useProxy);
 
         // ── File / state operations (Python parity) ─────────────────
         struct MoveResult

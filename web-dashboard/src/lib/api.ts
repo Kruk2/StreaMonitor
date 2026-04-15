@@ -33,6 +33,7 @@ export interface BotState {
   currentFile: string
   uptimeSeconds: number
   timeSinceStatusChange: number
+  useProxy: boolean
   recording_stats: {
     bytesWritten: number
     segmentsRecorded: number
@@ -246,6 +247,12 @@ export const stopModel = (username: string, siteSlug: string) =>
 
 export const restartModel = (username: string, siteSlug: string) =>
   apiFetch(`/models/${username}/${siteSlug}/restart`, { method: 'POST' })
+
+export const setModelProxy = (username: string, siteSlug: string, useProxy: boolean) =>
+  apiFetch(`/models/${username}/${siteSlug}/proxy`, {
+    method: 'PUT',
+    body: JSON.stringify({ useProxy }),
+  })
 
 export const startAll = () =>
   apiFetch('/start-all', { method: 'POST' })
