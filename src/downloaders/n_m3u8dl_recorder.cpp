@@ -479,7 +479,6 @@ namespace sm
         }
         else
         {
-            // Fallback: scan for files N_m3u8DL-RE may have created
             for (const auto &ext : {".mkv", ".mp4", ".ts"})
             {
                 fs::path candidate = fs::path(outputDir) / (outputName + ext);
@@ -488,6 +487,37 @@ namespace sm
                     result.outputPath = candidate.string();
                     result.bytesWritten = fs::file_size(candidate, ec);
                     break;
+                }
+            }
+        }
+
+        // If we got a .ts file but wanted a different container, remux with ffmpeg
+        if (!result.outputPath.empty())
+        {
+            fs::path found(result.outputPath);
+            fs::path desired(outputPath);
+            if (found.extension() == ".ts" && desired.extension() != ".ts" &&
+                result.bytesWritten > 0)
+            {
+                log_->info("Remuxing {} → {}", found.filename().string(),
+                           desired.filename().string());
+                std::string ffmpeg = config_.ffmpegPath.string();
+                std::string cmd = ffmpeg +
+                    " -y -i \"" + result.outputPath +
+                    "\" -c copy -movflags +faststart \"" +
+                    outputPath + "\"";
+                int rc = std::system(cmd.c_str());
+                if (rc == 0 && fs::exists(outputPath, ec))
+                {
+                    fs::remove(found, ec);
+                    result.outputPath = outputPath;
+                    result.bytesWritten = fs::file_size(outputPath, ec);
+                    log_->info("Remux complete: {} ({} bytes)",
+                               desired.filename().string(), result.bytesWritten);
+                }
+                else
+                {
+                    log_->warn("Remux failed (exit {}), keeping .ts file", rc);
                 }
             }
         }
