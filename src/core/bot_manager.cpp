@@ -282,13 +282,10 @@ namespace sm
 
             it->plugin->requestQuit();
             slug = it->plugin->siteSlug();
-            auto siteName = it->plugin->siteName();
             pluginToDestroy = std::move(it->plugin); // take ownership
             bots_.erase(it);
 
-            // Try both slug and name — config may store either
-            if (!configStore_.remove(username, slug))
-                configStore_.remove(username, siteName);
+            configStore_.remove(username, slug);
             configStore_.save();
         }
         // ~SitePlugin (thread join) happens here, OUTSIDE the lock

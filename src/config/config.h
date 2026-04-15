@@ -186,6 +186,8 @@ namespace sm
         // Try loading models from a file. Returns true on success.
         // Caller must hold mutex_.
         bool tryLoadFrom_(const std::filesystem::path &path);
+        // Match site by slug or name (handles config storing either form)
+        static bool siteMatches_(const std::string &stored, const std::string &query);
     };
 
     // JSON serialization

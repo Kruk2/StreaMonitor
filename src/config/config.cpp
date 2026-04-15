@@ -1,4 +1,5 @@
 #include "config/config.h"
+#include "core/site_plugin.h"
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <cstdlib>
@@ -291,7 +292,7 @@ namespace sm
         // Check for duplicate
         for (const auto &m : models_)
         {
-            if (m.username == model.username && m.site == model.site)
+            if (m.username == model.username && siteMatches_(m.site, model.site))
                 return;
         }
         models_.push_back(model);
@@ -306,7 +307,7 @@ namespace sm
                                  {
                                      if (siteslug.empty())
                                          return m.username == username;
-                                     return m.username == username && m.site == siteslug;
+                                     return m.username == username && siteMatches_(m.site, siteslug);
                                  });
         if (it != models_.end())
         {
@@ -322,7 +323,7 @@ namespace sm
         std::lock_guard lock(mutex_);
         for (auto &m : models_)
         {
-            if (m.username == username && (siteslug.empty() || m.site == siteslug))
+            if (m.username == username && (siteslug.empty() || siteMatches_(m.site, siteslug)))
             {
                 m.lastStatus = status;
                 m.recording = recording;
@@ -336,7 +337,7 @@ namespace sm
         std::lock_guard lock(mutex_);
         for (auto &m : models_)
         {
-            if (m.username == username && (siteslug.empty() || m.site == siteslug))
+            if (m.username == username && (siteslug.empty() || siteMatches_(m.site, siteslug)))
                 m.running = running;
         }
     }
@@ -353,7 +354,7 @@ namespace sm
         std::lock_guard lock(mutex_);
         for (auto &m : models_)
         {
-            if (m.username == username && (site.empty() || m.site == site))
+            if (m.username == username && (site.empty() || siteMatches_(m.site, site)))
                 m.crossRegisterGroup = groupName;
         }
     }
@@ -363,7 +364,7 @@ namespace sm
         std::lock_guard lock(mutex_);
         for (auto &m : models_)
         {
-            if (m.username == username && (site.empty() || m.site == site))
+            if (m.username == username && (site.empty() || siteMatches_(m.site, site)))
                 m.useProxy = useProxy;
         }
     }
@@ -374,7 +375,7 @@ namespace sm
         std::lock_guard lock(mutex_);
         for (const auto &m : models_)
         {
-            if (m.username == username && (siteslug.empty() || m.site == siteslug))
+            if (m.username == username && (siteslug.empty() || siteMatches_(m.site, siteslug)))
                 return m;
         }
         return std::nullopt;
@@ -384,6 +385,20 @@ namespace sm
     {
         std::lock_guard lock(mutex_);
         return models_.size();
+    }
+
+    bool ModelConfigStore::siteMatches_(const std::string &stored, const std::string &query)
+    {
+        if (stored == query)
+            return true;
+        auto &reg = SiteRegistry::instance();
+        auto slugOfStored = reg.nameToSlug(stored);
+        if (!slugOfStored.empty() && slugOfStored == query)
+            return true;
+        auto nameOfQuery = reg.slugToName(query);
+        if (!nameOfQuery.empty() && nameOfQuery == stored)
+            return true;
+        return false;
     }
 
     // ─────────────────────────────────────────────────────────────────
