@@ -30,7 +30,9 @@
 #endif
 
 // Forward declarations (defined in main_gui.cpp / main_cli.cpp)
+#ifndef SM_HEADLESS
 int guiMain(int argc, char **argv);
+#endif
 int cliMain(int argc, char **argv);
 
 // ─────────────────────────────────────────────────────────────────
@@ -317,6 +319,10 @@ int main(int argc, char **argv)
         return 1;
     }
 
+#ifdef SM_HEADLESS
+    // Headless build: always run in CLI mode
+    bool cliMode = true;
+#else
     // Check if --cli flag is present anywhere in args
     bool cliMode = false;
     for (int i = 1; i < argc; i++)
@@ -328,6 +334,7 @@ int main(int argc, char **argv)
             break;
         }
     }
+#endif
 
     int result = 0;
 
@@ -352,11 +359,13 @@ int main(int argc, char **argv)
 #endif
         result = cliMain(argc, argv);
     }
+#ifndef SM_HEADLESS
     else
     {
         // GUI mode (default)
         result = guiMain(argc, argv);
     }
+#endif
 
     releaseSingleInstance();
     return result;
