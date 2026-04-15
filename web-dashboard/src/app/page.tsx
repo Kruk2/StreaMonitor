@@ -379,8 +379,10 @@ function ModelDetailModal({ bot, onClose, onAction }: {
                 <Ico d={ic.refresh} /> Restart
               </button>
               <button onClick={() => {
-                if (confirm(`Remove ${bot.username} [${bot.siteSlug}]?`))
+                if (confirm(`Remove ${bot.username} [${bot.siteSlug}]?`)) {
                   onAction(() => removeModel(bot.username, bot.siteSlug))
+                  onClose()
+                }
               }} className="btn btn-danger flex-1 text-sm">
                 <Ico d={ic.trash} /> Remove
               </button>
