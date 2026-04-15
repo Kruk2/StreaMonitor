@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # ── Stage 1: Build the Next.js dashboard ──────────────────────────
 FROM node:22-alpine AS web-builder
 WORKDIR /src/web-dashboard
@@ -14,7 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential gcc-12 g++-12 cmake ninja-build git curl zip unzip tar \
     pkg-config linux-libc-dev ca-certificates \
-    autoconf automake libtool make python3 nasm \
+    autoconf automake libtool make python3 nasm ccache \
     && rm -rf /var/lib/apt/lists/*
 
 # Install vcpkg at the baseline commit referenced in vcpkg.json
@@ -28,6 +29,12 @@ ENV PATH="${VCPKG_ROOT}:${PATH}"
 ENV CC=gcc-12
 ENV CXX=g++-12
 
+# ccache: wrap compiler calls to cache object files across rebuilds
+ENV CMAKE_C_COMPILER_LAUNCHER=ccache
+ENV CMAKE_CXX_COMPILER_LAUNCHER=ccache
+ENV CCACHE_DIR=/ccache
+ENV CCACHE_MAXSIZE=2G
+
 WORKDIR /src
 
 # Skip debug builds — release only (halves vcpkg build time)
@@ -38,7 +45,8 @@ RUN mkdir -p /src/triplets \
 
 # Install vcpkg dependencies first (cached unless vcpkg.json changes)
 COPY vcpkg.json ./
-RUN vcpkg install --triplet arm64-linux \
+RUN --mount=type=cache,target=/root/.cache/vcpkg \
+    vcpkg install --triplet arm64-linux \
     --x-manifest-root=/src \
     --x-install-root=/src/vcpkg_installed
 
@@ -48,7 +56,8 @@ COPY src/ src/
 COPY third_party/ third_party/
 COPY tools/ tools/
 
-RUN cmake -G Ninja \
+RUN --mount=type=cache,target=/ccache \
+    cmake -G Ninja \
     -S . \
     -B build \
     -DCMAKE_BUILD_TYPE=Release \
@@ -62,7 +71,8 @@ RUN cmake -G Ninja \
     -DVCPKG_MANIFEST_MODE=OFF \
     -DENABLE_GUI=OFF
 
-RUN ninja -C build
+RUN --mount=type=cache,target=/ccache \
+    ninja -C build
 
 # ── Stage 3a: Get musl-compatible OpenSSL for N_m3u8DL-RE ────────
 FROM alpine:3.18 AS alpine-libs

@@ -1,6 +1,8 @@
 services:
   streamonitor:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: streamonitor
     restart: unless-stopped
     stdin_open: true
