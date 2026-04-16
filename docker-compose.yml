@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     container_name: streamonitor
     restart: unless-stopped
+    stop_grace_period: 30s
     stdin_open: true
     tty: true
     ports:

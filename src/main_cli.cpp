@@ -59,6 +59,8 @@ static void signalHandler(int sig)
 {
     std::cout << "\nReceived signal, shutting down...\n";
     g_shutdown.store(true);
+    // Close stdin to unblock std::getline() in the command loop
+    std::fclose(stdin);
 }
 
 static void initLogging()
