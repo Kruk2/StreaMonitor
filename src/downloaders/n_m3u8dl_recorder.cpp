@@ -89,13 +89,13 @@ namespace sm
         args.push_back("--tmp-dir");
         args.push_back((fs::path(outputDir) / ".tmp_nm3u8dl").string());
 
-        // --live-pipe-mux forces LiveRealTimeMerge on, which preserves
-        // broadcast timestamps ensuring audio/video stay in sync.
-        // Combined with N_M3U8DL_NO_FFMPEG_PIPE=1 (set in record()), this
-        // bypasses the ffmpeg named-pipe approach that causes A/V desync
-        // and instead uses N_m3u8DL-RE's internal binary merger.
-        // (Reference: KFERMercer/ctbcap#54, ctbcap#56)
-        args.push_back("--live-pipe-mux");
+        // Live streams with split audio/video tracks (CB) can desync when
+        // using ffmpeg pipe mux. Prefer N_m3u8DL-RE's non-pipe live merge.
+        args.push_back("--live-real-time-merge");
+
+        // Keep segment merge in binary mode so timestamps are preserved for
+        // split A/V streams before final post-mux (-M format=...).
+        args.push_back("--binary-merge");
 
         // Thread count — use 4 for live to avoid overwhelming CDN
         args.push_back("--thread-count");
@@ -430,11 +430,8 @@ namespace sm
 
         auto args = buildArgs(hlsUrl, outputDir, outputName, userAgent, headers);
 
-        // N_M3U8DL_NO_FFMPEG_PIPE=1 disables the ffmpeg named-pipe
-        // approach that causes audio desync with split audio/video streams.
-        // N_m3u8DL-RE's internal binary merger preserves broadcast timestamps,
-        // then -M remuxes into the desired container after recording.
-        // (Fix for: KFERMercer/ctbcap#54, ctbcap#56)
+        // Compatibility safeguard for builds that may still attempt ffmpeg
+        // named-pipe muxing in live mode.
         std::string pipeEnvStr = "1";
 
         // Log the command
