@@ -219,6 +219,13 @@ namespace sm
         // prefers the external tool (when available). Default: false.
         virtual bool preferExternalRecorder() const { return false; }
 
+        // Fetch a fresh master/stream URL with a new auth token.
+        // Called from the external recorder thread so that N_m3u8DL-RE
+        // gets its own session token (CB tokens are session-bound).
+        // Default: calls checkStatus() + getVideoUrl(). Sites may
+        // override for a lighter-weight refresh.
+        virtual std::string getFreshStreamUrl();
+
         // ── Bulk update support ─────────────────────────────────────
         virtual bool supportsBulkUpdate() const { return false; }
 

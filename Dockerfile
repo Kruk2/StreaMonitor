@@ -84,7 +84,7 @@ FROM ubuntu:22.04 AS runtime
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl musl ffmpeg \
+    ca-certificates curl musl ffmpeg binutils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy musl-compatible OpenSSL libs (glibc libssl won't work with musl binary)

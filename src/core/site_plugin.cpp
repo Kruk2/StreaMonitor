@@ -261,7 +261,10 @@ namespace sm
     BotState SitePlugin::getState() const
     {
         std::lock_guard lock(stateMutex_);
-        return state_;
+        auto st = state_;
+        if (!st.running)
+            st.status = Status::NotRunning;
+        return st;
     }
 
     Status SitePlugin::getStatus() const
@@ -330,6 +333,23 @@ namespace sm
     {
         std::lock_guard lock(masterUrlMutex_);
         return lastMasterUrl_;
+    }
+
+    std::string SitePlugin::getFreshStreamUrl()
+    {
+        auto status = checkStatus();
+        if (status != Status::Online)
+        {
+            logger_->warn("getFreshStreamUrl: model not online ({})", static_cast<int>(status));
+            return "";
+        }
+        // Save masterUrl — getVideoUrl() calls selectResolution() which
+        // overwrites it, but the main recorder thread may be using it.
+        std::string savedMaster = masterUrl();
+        std::string url = getVideoUrl();
+        if (!savedMaster.empty())
+            setMasterUrl(savedMaster);
+        return url;
     }
 
     void SitePlugin::setMasterUrl(const std::string &url)
@@ -1509,19 +1529,23 @@ namespace sm
                                 (p.stem().string() + "_ffmpeg" + p.extension().string()))
                                    .string();
 
-            // N_m3u8DL-RE works best with the original master URL (it does
-            // its own resolution selection via --sv best / --sa best).
-            // masterUrl() was set by selectResolution() inside getVideoUrl().
-            std::string extUrl = masterUrl();
-            if (extUrl.empty())
-                extUrl = videoUrl; // fallback
-
             logger_->info("Dual recording: N_m3u8DL-RE (primary) → {}", outputPath);
             logger_->info("Dual recording: FFmpeg (secondary) → {}", ffmpegOutputPath);
 
             extRecorderThread = std::thread(
-                [this, &config, extUrl, outputPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
+                [this, &config, outputPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
                 {
+                    // Fetch a fresh HLS URL with a new session token.
+                    // CB tokens are session-bound — reusing the main
+                    // recorder's token causes 403 Forbidden.
+                    std::string extUrl = getFreshStreamUrl();
+                    if (extUrl.empty())
+                    {
+                        logger_->warn("N_m3u8DL-RE: failed to get fresh stream URL");
+                        return;
+                    }
+                    logger_->info("N_m3u8DL-RE: got fresh URL for recording");
+
                     NM3U8DLRecorder extRecorder(config);
                     extRecorder.setLogger(logger_);
                     auto res = extRecorder.record(extUrl, outputPath,

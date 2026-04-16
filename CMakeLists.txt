@@ -22,6 +22,7 @@ if(MSVC)
     add_link_options(/DEBUG /OPT:REF /OPT:ICF)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-g -gdwarf-4)
+    add_link_options(-rdynamic)
 endif()
 
 # ──────────────────────────────────────────────

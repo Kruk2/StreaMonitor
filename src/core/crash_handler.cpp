@@ -951,6 +951,47 @@ namespace sm
         if (symbols)
             free(symbols);
 
+        // Flush basic stack trace to disk first (async-signal-safe phase done)
+        writeAllFd(fd, buf, off);
+        off = 0;
+
+        // Phase 2: addr2line resolution (NOT async-signal-safe, but basic phase is on disk)
+#ifdef __linux__
+        {
+            static char exePath[PATH_MAX];
+            ssize_t exeLen = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+            if (exeLen > 0)
+            {
+                exePath[exeLen] = '\0';
+                off = bufAppend(buf, off, mx, "\n-- Symbolicated (addr2line) ----------------------------\n");
+                for (int i = 0; i < count; i++)
+                {
+                    // Compute offset relative to binary base using /proc/self/maps
+                    static char cmd[2048];
+                    snprintf(cmd, sizeof(cmd),
+                             "addr2line -e %s -f -C -p %p 2>/dev/null",
+                             exePath, frames[i]);
+                    FILE *pipe = popen(cmd, "r");
+                    if (pipe)
+                    {
+                        static char line[512];
+                        off = bufAppend(buf, off, mx, "  #%-3d ", i);
+                        while (fgets(line, sizeof(line), pipe))
+                        {
+                            // Trim trailing newline
+                            size_t len = strlen(line);
+                            if (len > 0 && line[len - 1] == '\n')
+                                line[len - 1] = '\0';
+                            off = bufAppend(buf, off, mx, "%s", line);
+                        }
+                        off = bufAppend(buf, off, mx, "\n");
+                        pclose(pipe);
+                    }
+                }
+            }
+        }
+#endif
+
 #ifdef __linux__
         off = bufAppend(buf, off, mx, "\n-- Memory Map ------------------------------------------\n");
         int mapsFd = open("/proc/self/maps", O_RDONLY);
