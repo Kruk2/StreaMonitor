@@ -617,6 +617,8 @@ namespace sm
                 proxyDisableSec = j["proxy_disable_sec"];
             if (j.contains("proxy_auto_disable"))
                 proxyAutoDisable = j["proxy_auto_disable"];
+            if (j.contains("vpn_enabled"))
+                vpnEnabled = j["vpn_enabled"];
 
             proxies.clear();
             if (j.contains("proxies") && j["proxies"].is_array())
@@ -769,6 +771,7 @@ namespace sm
         j["proxy_max_failures"] = proxyMaxFailures;
         j["proxy_disable_sec"] = proxyDisableSec;
         j["proxy_auto_disable"] = proxyAutoDisable;
+        j["vpn_enabled"] = vpnEnabled;
 
         nlohmann::json proxyArr = nlohmann::json::array();
         for (const auto &proxy : proxies)

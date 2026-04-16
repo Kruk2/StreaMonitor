@@ -66,6 +66,9 @@ namespace sm
         int proxyDisableSec = 60;        // Seconds to disable after max failures
         bool proxyAutoDisable = true;    // Auto-disable failing proxies
 
+        // VPN
+        bool vpnEnabled = false;
+
         // Web server
         bool webEnabled = true;
         std::string webHost = "0.0.0.0"; // 0.0.0.0 = listen on all interfaces (WiFi intranet)

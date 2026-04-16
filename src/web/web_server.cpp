@@ -849,6 +849,7 @@ namespace sm
                 {"proxyDisableSec", config_.proxyDisableSec},
                 {"proxyAutoDisable", config_.proxyAutoDisable},
                 {"proxyCount", (int)config_.proxies.size()},
+                {"vpnEnabled", config_.vpnEnabled},
                 // Encoding settings
                 {"encoding", {
                     {"encoder", static_cast<int>(config_.encoding.encoder)},
@@ -963,6 +964,8 @@ namespace sm
                     config_.proxyDisableSec = body["proxyDisableSec"].get<int>();
                 if (body.contains("proxyAutoDisable"))
                     config_.proxyAutoDisable = body["proxyAutoDisable"].get<bool>();
+                if (body.contains("vpnEnabled"))
+                    config_.vpnEnabled = body["vpnEnabled"].get<bool>();
                 if (body.contains("proxies") && body["proxies"].is_array())
                 {
                     config_.proxies.clear();

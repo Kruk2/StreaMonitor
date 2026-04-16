@@ -866,6 +866,8 @@ try
                     config.autoRemoveNonExistent = toBool(val);
                 else if (key == "proxyEnabled")
                     config.proxyEnabled = toBool(val);
+                else if (key == "vpnEnabled")
+                    config.vpnEnabled = toBool(val);
                 else if (key == "webEnabled")
                     config.webEnabled = toBool(val);
                 else if (key == "webHost")
