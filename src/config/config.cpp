@@ -335,11 +335,16 @@ namespace sm
                                          bool running)
     {
         std::lock_guard lock(mutex_);
+        bool found = false;
         for (auto &m : models_)
         {
             if (m.username == username && (siteslug.empty() || siteMatches_(m.site, siteslug)))
+            {
                 m.running = running;
+                found = true;
+            }
         }
+        spdlog::info("updateRunning({}, {}, {}) → {}", username, siteslug, running, found ? "matched" : "NO MATCH");
     }
 
     std::vector<ModelConfig> ModelConfigStore::getAll() const
