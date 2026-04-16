@@ -1487,44 +1487,46 @@ namespace sm
         std::string outputPath = generateOutputPath(config);
         logger_->info("Started downloading show → {}", outputPath);
 
-        // ── Try N_m3u8DL-RE external recorder if site prefers it ────
-        if (preferExternalRecorder() &&
-            NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string()))
+        // ── Dual recording: N_m3u8DL-RE companion + built-in FFmpeg ──
+        // For sites that prefer external recorder (CB), run N_m3u8DL-RE
+        // alongside the built-in FFmpeg recorder for A/V sync coverage.
+        // N_m3u8DL-RE writes to a separate file (same name + "_ext" suffix).
+        // The built-in recorder is the primary (handles preview/audio/pause).
+        std::thread extRecorderThread;
+        std::atomic<bool> extRecorderSuccess{false};
+        std::string extFinalPath;
+        CancellationToken extCancelToken;
+
+        bool dualRecord = preferExternalRecorder() &&
+                          NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string());
+
+        if (dualRecord)
         {
-            logger_->info("Using N_m3u8DL-RE external recorder");
-            setRecording(true);
+            // Build a distinct output path for the external recorder
+            auto p = fs::path(outputPath);
+            std::string extOutPath = (p.parent_path() /
+                                      (p.stem().string() + "_ext" + p.extension().string()))
+                                         .string();
 
-            NM3U8DLRecorder extRecorder(config);
-            extRecorder.setLogger(logger_);
+            // N_m3u8DL-RE works best with the original master URL (it does
+            // its own resolution selection via --sv best / --sa best).
+            // masterUrl() was set by selectResolution() inside getVideoUrl().
+            std::string extUrl = masterUrl();
+            if (extUrl.empty())
+                extUrl = videoUrl; // fallback
 
-            cancelToken_.reset();
-            auto extResult = extRecorder.record(videoUrl, outputPath, cancelToken_,
-                                                config.userAgent);
+            logger_->info("Dual recording: N_m3u8DL-RE companion → {}", extOutPath);
 
-            setRecording(false);
-
-            bool ok = extResult.success;
-            std::string finalPath = extResult.outputPath.empty() ? outputPath : extResult.outputPath;
-            ok = postDownloadCleanup(finalPath, ok);
-
-            if (ok)
-            {
-                std::error_code ec;
-                if (fs::exists(finalPath, ec))
+            extRecorderThread = std::thread(
+                [this, &config, extUrl, extOutPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
                 {
-                    auto fileSize = fs::file_size(finalPath, ec);
-                    logger_->info("Recording ended successfully: {} ({} bytes)",
-                                  finalPath, fileSize);
-                    std::lock_guard lock(stateMutex_);
-                    state_.totalBytes += fileSize;
-                }
-            }
-            else
-            {
-                logger_->warn("Recording failed");
-            }
-
-            return ok;
+                    NM3U8DLRecorder extRecorder(config);
+                    extRecorder.setLogger(logger_);
+                    auto res = extRecorder.record(extUrl, extOutPath,
+                                                  extCancelToken, config.userAgent);
+                    extRecorderSuccess.store(res.success);
+                    extFinalPath = res.outputPath.empty() ? extOutPath : res.outputPath;
+                });
         }
 
         // ── Built-in FFmpeg HLS recorder ─────────────────────────────
@@ -1708,6 +1710,31 @@ namespace sm
                                       config.userAgent, "", {}, {}, masterUrl());
 
         setRecording(false);
+
+        // ── Stop dual-recording companion ─────────────────────────────
+        if (dualRecord && extRecorderThread.joinable())
+        {
+            extCancelToken.cancel();
+            extRecorderThread.join();
+
+            if (extRecorderSuccess.load() && !extFinalPath.empty())
+            {
+                postDownloadCleanup(extFinalPath, true);
+                std::error_code ec;
+                if (fs::exists(extFinalPath, ec))
+                {
+                    auto extSize = fs::file_size(extFinalPath, ec);
+                    logger_->info("Ext recorder finished: {} ({} bytes)",
+                                  extFinalPath, extSize);
+                    std::lock_guard lock(stateMutex_);
+                    state_.totalBytes += extSize;
+                }
+            }
+            else
+            {
+                logger_->debug("Ext recorder did not produce output");
+            }
+        }
 
         // Clean up split-audio temp master playlist file (if any)
         cleanupSplitAudioTempFile();

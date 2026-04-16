@@ -1082,42 +1082,27 @@ namespace sm
                         }
                     }
 
-                    // Download NEW media segments (sequence > lastSeq)
+                    // ── Collect new video segments ─────────────────
+                    struct PendingSeg
+                    {
+                        std::string url;
+                        int64_t seq;
+                    };
+                    std::vector<PendingSeg> newVideoSegs;
                     for (const auto &seg : playlist.segments)
                     {
-                        if (seg.isMap)
+                        if (seg.isMap || seg.sequenceNumber <= lastSeq)
                             continue;
-                        if (seg.sequenceNumber <= lastSeq)
-                            continue;
-                        if (cancel->isCancelled() || !running.load())
-                            break;
-
-                        // Skip CPA segment URLs
                         if (seg.uri.find("/cpa/") != std::string::npos)
                             continue;
-                        // Skip mouflon placeholder
                         if (seg.uri == "media.mp4")
                             continue;
-
-                        auto url = fixSegmentUrl(playlistUrl, seg.uri);
-                        auto segResp = threadHttp.get(url, 15);
-                        if (segResp.ok() && !segResp.body.empty())
-                        {
-                            feedBytes(segResp.body);
-                            lastSeq = seg.sequenceNumber;
-                        }
-                        else
-                        {
-                            log->debug("SegmentFeeder: segment seq={} download "
-                                       "failed (HTTP {}), skipping",
-                                       seg.sequenceNumber, segResp.statusCode);
-                            // Skip this segment but update lastSeq to avoid
-                            // re-trying it on the next poll
-                            lastSeq = seg.sequenceNumber;
-                        }
+                        newVideoSegs.push_back(
+                            {fixSegmentUrl(playlistUrl, seg.uri), seg.sequenceNumber});
                     }
 
-                    // ── Audio playlist polling (split audio) ─────────
+                    // ── Collect new audio segments (split audio) ─────
+                    std::vector<PendingSeg> newAudioSegs;
                     if (!audioPlaylistUrl.empty())
                     {
                         auto audioResp = threadHttp.get(audioPlaylistUrl, 10);
@@ -1125,29 +1110,49 @@ namespace sm
                         {
                             auto ap = M3U8Parser::parseMedia(
                                 audioResp.body, audioPlaylistUrl);
-
                             for (const auto &seg : ap.segments)
                             {
-                                if (seg.isMap)
+                                if (seg.isMap || seg.sequenceNumber <= audioLastSeq)
                                     continue;
-                                if (seg.sequenceNumber <= audioLastSeq)
-                                    continue;
-                                if (cancel->isCancelled() || !running.load())
-                                    break;
-
-                                auto url = fixSegmentUrl(audioPlaylistUrl, seg.uri);
-                                auto aResp = threadHttp.get(url, 15);
-                                if (aResp.ok() && !aResp.body.empty())
-                                {
-                                    fmp4::patchSegmentTrackId(aResp.body, 2);
-                                    feedBytes(aResp.body);
-                                    audioLastSeq = seg.sequenceNumber;
-                                }
-                                else
-                                {
-                                    audioLastSeq = seg.sequenceNumber;
-                                }
+                                newAudioSegs.push_back(
+                                    {fixSegmentUrl(audioPlaylistUrl, seg.uri),
+                                     seg.sequenceNumber});
                             }
+                        }
+                    }
+
+                    // ── Interleaved download: V[i] A[i] V[i+1] A[i+1] …
+                    // Feeding video and audio alternately prevents bursty
+                    // delivery that causes FFmpeg muxer desync.
+                    size_t maxSegs = std::max(newVideoSegs.size(),
+                                              newAudioSegs.size());
+                    for (size_t i = 0; i < maxSegs; i++)
+                    {
+                        if (cancel->isCancelled() || !running.load())
+                            break;
+
+                        // Video segment
+                        if (i < newVideoSegs.size())
+                        {
+                            auto segResp = threadHttp.get(newVideoSegs[i].url, 15);
+                            if (segResp.ok() && !segResp.body.empty())
+                                feedBytes(segResp.body);
+                            else
+                                log->debug("SegmentFeeder: video seq={} failed (HTTP {})",
+                                           newVideoSegs[i].seq, segResp.statusCode);
+                            lastSeq = newVideoSegs[i].seq;
+                        }
+
+                        // Audio segment (interleaved immediately after its video pair)
+                        if (i < newAudioSegs.size())
+                        {
+                            auto aResp = threadHttp.get(newAudioSegs[i].url, 15);
+                            if (aResp.ok() && !aResp.body.empty())
+                            {
+                                fmp4::patchSegmentTrackId(aResp.body, 2);
+                                feedBytes(aResp.body);
+                            }
+                            audioLastSeq = newAudioSegs[i].seq;
                         }
                     }
                 }
@@ -1340,7 +1345,8 @@ namespace sm
             av_dict_set(&opts, "analyzeduration", config_.ffmpeg.analyzeDuration.c_str(), 0);
 
             // Flags — igndts+genpts for clean timestamps
-            av_dict_set(&opts, "fflags", "igndts+genpts+discardcorrupt", 0);
+            // correct_ts_overflow: handle timestamp wraps in long recordings
+            av_dict_set(&opts, "fflags", "igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
 
             log_->debug("openInput: AVIO mode (SegmentFeeder)");
             ret = avformat_open_input(&state.inputCtx, nullptr, nullptr, &opts);
@@ -1429,7 +1435,8 @@ namespace sm
                 //   gives FFmpeg virtually infinite retries before EOF.
                 // igndts:   ignore broken DTS from long-running live streams
                 // genpts:   regenerate PTS for clean output
-                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt", 0);
+                // correct_ts_overflow: handle timestamp wraps in long split-audio recordings
+                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
             }
             else
             {
@@ -1462,7 +1469,8 @@ namespace sm
                 av_dict_set(&opts, "analyzeduration", config_.ffmpeg.analyzeDuration.c_str(), 0);
 
                 // Flags — match Python: nobuffer+igndts+genpts+discardcorrupt
-                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt", 0);
+                // correct_ts_overflow: handle timestamp wraps in long split-audio recordings
+                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
             }
 
             // Open input (force HLS format for .m3u8 inputs)
@@ -1996,6 +2004,12 @@ namespace sm
         // Muxer options
         AVDictionary *muxOpts = nullptr;
         av_dict_set(&muxOpts, "avoid_negative_ts", "make_zero", 0);
+
+        // Increase max_interleave_delta for split audio/video streams.
+        // With SegmentFeeder, A/V segments arrive in interleaved bursts
+        // (not perfectly synchronized). Default 10s can trigger premature
+        // interleave flushes → A/V desync. 16s gives enough headroom.
+        state.outputCtx->max_interleave_delta = 16 * AV_TIME_BASE;
 
         // For Matroska: reserve space for the Cues (seek index) at the
         // beginning of the file so the trailer can write Cues and Duration
