@@ -1345,8 +1345,7 @@ namespace sm
             av_dict_set(&opts, "analyzeduration", config_.ffmpeg.analyzeDuration.c_str(), 0);
 
             // Flags — igndts+genpts for clean timestamps
-            // correct_ts_overflow: handle timestamp wraps in long recordings
-            av_dict_set(&opts, "fflags", "igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
+            av_dict_set(&opts, "fflags", "igndts+genpts+discardcorrupt", 0);
 
             log_->debug("openInput: AVIO mode (SegmentFeeder)");
             ret = avformat_open_input(&state.inputCtx, nullptr, nullptr, &opts);
@@ -1435,8 +1434,7 @@ namespace sm
                 //   gives FFmpeg virtually infinite retries before EOF.
                 // igndts:   ignore broken DTS from long-running live streams
                 // genpts:   regenerate PTS for clean output
-                // correct_ts_overflow: handle timestamp wraps in long split-audio recordings
-                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
+                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt", 0);
             }
             else
             {
@@ -1469,8 +1467,7 @@ namespace sm
                 av_dict_set(&opts, "analyzeduration", config_.ffmpeg.analyzeDuration.c_str(), 0);
 
                 // Flags — match Python: nobuffer+igndts+genpts+discardcorrupt
-                // correct_ts_overflow: handle timestamp wraps in long split-audio recordings
-                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt+correct_ts_overflow", 0);
+                av_dict_set(&opts, "fflags", "nobuffer+igndts+genpts+discardcorrupt", 0);
             }
 
             // Open input (force HLS format for .m3u8 inputs)
