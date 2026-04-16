@@ -5,8 +5,10 @@
 #include "downloaders/n_m3u8dl_recorder.h"
 #include <spdlog/spdlog.h>
 #include <filesystem>
+#include <string>
 #include <array>
 #include <cstdio>
+#include <cmath>
 #include <thread>
 #include <chrono>
 
@@ -22,6 +24,58 @@
 #endif
 
 namespace fs = std::filesystem;
+
+#ifdef _WIN32
+#define sm_popen _popen
+#define sm_pclose _pclose
+#else
+#define sm_popen popen
+#define sm_pclose pclose
+#endif
+
+namespace
+{
+    double probeStartTime(const fs::path &ffprobePath, const fs::path &mediaFile)
+    {
+        std::string cmd = "\"" + ffprobePath.string() + "\""
+                          " -v error"
+                          " -show_entries format=start_time"
+                          " -of default=noprint_wrappers=1:nokey=1"
+                          " \"" + mediaFile.string() + "\"";
+
+        FILE *pipe = sm_popen(cmd.c_str(), "r");
+        if (!pipe)
+            return 0.0;
+
+        char buf[256];
+        std::string output;
+        while (fgets(buf, sizeof(buf), pipe))
+            output += buf;
+        sm_pclose(pipe);
+
+        try
+        {
+            return std::stod(output);
+        }
+        catch (...)
+        {
+            return 0.0;
+        }
+    }
+
+    fs::path deriveFFprobePath(const fs::path &ffmpegPath)
+    {
+        std::string stem = ffmpegPath.stem().string();
+        std::string ext = ffmpegPath.extension().string();
+        auto pos = stem.find("ffmpeg");
+        if (pos != std::string::npos)
+        {
+            stem.replace(pos, 6, "ffprobe");
+            return ffmpegPath.parent_path() / (stem + ext);
+        }
+        return "ffprobe";
+    }
+} // anonymous namespace
 
 namespace sm
 {
@@ -89,12 +143,10 @@ namespace sm
         args.push_back("--tmp-dir");
         args.push_back((fs::path(outputDir) / ".tmp_nm3u8dl").string());
 
-        // Live streams with split audio/video tracks (CB) can desync when
-        // using ffmpeg pipe mux. Prefer N_m3u8DL-RE's non-pipe live merge.
+        // Binary merge with real-time merge preserves broadcast timestamps
+        // in separate .mp4 (video) and .m4a (audio) sidecar files. We then
+        // post-mux with computed A/V offset trimming for perfect sync.
         args.push_back("--live-real-time-merge");
-
-        // Keep segment merge in binary mode so timestamps are preserved for
-        // split A/V streams before final post-mux (-M format=...).
         args.push_back("--binary-merge");
 
         // Thread count — use 4 for live to avoid overwhelming CDN
@@ -107,6 +159,11 @@ namespace sm
 
         // Auto-select best streams
         args.push_back("--auto-select");
+
+        // Inherit auth/query params from input URL to child playlist/segments.
+        // Required for CB split A/V where audio chunklist URLs may omit signed
+        // query tokens in relative URIs.
+        args.push_back("--append-url-params");
 
         // Delete temp files when done
         args.push_back("--del-after-done");
@@ -121,23 +178,21 @@ namespace sm
         args.push_back("--log-level");
         args.push_back("INFO");
 
-        // Post-recording mux: remux binary-merged tracks into desired container.
-        // This runs AFTER recording completes (not during live stream).
-        std::string ext;
-        switch (config_.container)
+        // No -M: we handle post-recording mux ourselves with A/V offset
+        // correction. N_m3u8DL-RE produces raw .mp4 + .m4a sidecars.
+
+        // Chunk-by-duration: let N_m3u8DL-RE stop cleanly at the limit.
+        // Each chunk gets independent A/V offset correction during post-mux.
+        if (config_.recordingMode == 2 && config_.chunkDurationMin > 0)
         {
-        case ContainerFormat::MP4:
-            ext = "mp4";
-            break;
-        case ContainerFormat::TS:
-            ext = "ts";
-            break;
-        default:
-            ext = "mkv";
-            break;
+            int mins = config_.chunkDurationMin;
+            int h = mins / 60;
+            int m = mins % 60;
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%02d:%02d:00", h, m);
+            args.push_back("--live-record-limit");
+            args.push_back(buf);
         }
-        args.push_back("-M");
-        args.push_back("format=" + ext);
 
         // User agent
         if (!userAgent.empty())
@@ -430,8 +485,10 @@ namespace sm
 
         auto args = buildArgs(hlsUrl, outputDir, outputName, userAgent, headers);
 
-        // Compatibility safeguard for builds that may still attempt ffmpeg
-        // named-pipe muxing in live mode.
+        // Disable FFmpeg pipe so N_m3u8DL-RE uses binary merge, producing
+        // separate .mp4 (video) and .m4a (audio) files with broadcast
+        // timestamps preserved. We handle muxing ourselves with A/V offset
+        // correction for perfect sync.
         std::string pipeEnvStr = "1";
 
         // Log the command
@@ -468,14 +525,110 @@ namespace sm
             result.error = "N_m3u8DL-RE exited with code " + std::to_string(exitCode);
         }
 
-        // Check expected output path first, then scan for alternatives
-        if (fs::exists(outputPath, ec))
+        // --- Post-recording: mux split A/V sidecar files with offset correction ---
+        fs::path videoSidecar = fs::path(outputDir) / (outputName + ".mp4");
+        fs::path audioSidecar = fs::path(outputDir) / (outputName + ".m4a");
+        fs::path desiredPath(outputPath);
+        std::string ffmpegStr = "\"" + config_.ffmpegPath.string() + "\"";
+        bool isMp4 = desiredPath.extension() == ".mp4";
+        std::string movflags = isMp4 ? " -movflags +faststart" : "";
+
+        if (fs::exists(videoSidecar, ec) && fs::exists(audioSidecar, ec))
         {
-            result.outputPath = outputPath;
-            result.bytesWritten = fs::file_size(outputPath, ec);
+            // Split A/V stream: probe start_time, compute offset, trim-mux
+            fs::path ffprobePath = deriveFFprobePath(config_.ffmpegPath);
+            double vStart = probeStartTime(ffprobePath, videoSidecar);
+            double aStart = probeStartTime(ffprobePath, audioSidecar);
+            double delta = std::abs(aStart - vStart);
+
+            log_->info("Split A/V: video_start={:.3f}s audio_start={:.3f}s delta={:.3f}s",
+                       vStart, aStart, delta);
+
+            // Rename video sidecar if it collides with output path
+            fs::path videoInput = videoSidecar;
+            if (videoSidecar == desiredPath)
+            {
+                videoInput = fs::path(outputDir) / (outputName + ".video.mp4");
+                fs::rename(videoSidecar, videoInput, ec);
+            }
+
+            std::string vIn = "\"" + videoInput.string() + "\"";
+            std::string aIn = "\"" + audioSidecar.string() + "\"";
+            std::string out = "\"" + outputPath + "\"";
+
+            std::string muxCmd;
+            std::string d = std::to_string(delta);
+            if (aStart > vStart && delta > 0.0)
+            {
+                log_->info("Trimming {:.3f}s from video start to align with audio", delta);
+                muxCmd = ffmpegStr + " -y -ss " + d + " -i " + vIn +
+                         " -i " + aIn +
+                         " -c copy -map 0:v -map 1:a -shortest" +
+                         movflags + " " + out;
+            }
+            else if (vStart > aStart && delta > 0.0)
+            {
+                log_->info("Trimming {:.3f}s from audio start to align with video", delta);
+                muxCmd = ffmpegStr + " -y -i " + vIn +
+                         " -ss " + d + " -i " + aIn +
+                         " -c copy -map 0:v -map 1:a -shortest" +
+                         movflags + " " + out;
+            }
+            else
+            {
+                muxCmd = ffmpegStr + " -y -i " + vIn + " -i " + aIn +
+                         " -c copy -map 0:v -map 1:a -shortest" +
+                         movflags + " " + out;
+            }
+
+            log_->info("Post-mux: {}", muxCmd);
+            int muxRc = std::system(muxCmd.c_str());
+
+            if (muxRc == 0 && fs::exists(outputPath, ec))
+            {
+                result.outputPath = outputPath;
+                result.bytesWritten = fs::file_size(outputPath, ec);
+                log_->info("Post-mux complete: {} ({} bytes)",
+                           desiredPath.filename().string(), result.bytesWritten);
+                fs::remove(videoInput, ec);
+                fs::remove(audioSidecar, ec);
+            }
+            else
+            {
+                log_->warn("Post-mux failed (exit {}), keeping sidecar files", muxRc);
+                result.outputPath = videoInput.string();
+                result.bytesWritten = fs::file_size(videoInput, ec);
+            }
+        }
+        else if (fs::exists(videoSidecar, ec))
+        {
+            // Single-track stream (no audio sidecar)
+            if (videoSidecar.string() != outputPath)
+            {
+                std::string cmd = ffmpegStr + " -y -i \"" + videoSidecar.string() +
+                                  "\" -c copy" + movflags + " \"" + outputPath + "\"";
+                int rc = std::system(cmd.c_str());
+                if (rc == 0 && fs::exists(outputPath, ec))
+                {
+                    fs::remove(videoSidecar, ec);
+                    result.outputPath = outputPath;
+                    result.bytesWritten = fs::file_size(outputPath, ec);
+                }
+                else
+                {
+                    result.outputPath = videoSidecar.string();
+                    result.bytesWritten = fs::file_size(videoSidecar, ec);
+                }
+            }
+            else
+            {
+                result.outputPath = videoSidecar.string();
+                result.bytesWritten = fs::file_size(videoSidecar, ec);
+            }
         }
         else
         {
+            // Fallback: scan for any output file
             for (const auto &ext : {".mkv", ".mp4", ".ts"})
             {
                 fs::path candidate = fs::path(outputDir) / (outputName + ext);
@@ -484,37 +637,6 @@ namespace sm
                     result.outputPath = candidate.string();
                     result.bytesWritten = fs::file_size(candidate, ec);
                     break;
-                }
-            }
-        }
-
-        // If we got a .ts file but wanted a different container, remux with ffmpeg
-        if (!result.outputPath.empty())
-        {
-            fs::path found(result.outputPath);
-            fs::path desired(outputPath);
-            if (found.extension() == ".ts" && desired.extension() != ".ts" &&
-                result.bytesWritten > 0)
-            {
-                log_->info("Remuxing {} → {}", found.filename().string(),
-                           desired.filename().string());
-                std::string ffmpeg = config_.ffmpegPath.string();
-                std::string cmd = ffmpeg +
-                    " -y -i \"" + result.outputPath +
-                    "\" -c copy -movflags +faststart \"" +
-                    outputPath + "\"";
-                int rc = std::system(cmd.c_str());
-                if (rc == 0 && fs::exists(outputPath, ec))
-                {
-                    fs::remove(found, ec);
-                    result.outputPath = outputPath;
-                    result.bytesWritten = fs::file_size(outputPath, ec);
-                    log_->info("Remux complete: {} ({} bytes)",
-                               desired.filename().string(), result.bytesWritten);
-                }
-                else
-                {
-                    log_->warn("Remux failed (exit {}), keeping .ts file", rc);
                 }
             }
         }

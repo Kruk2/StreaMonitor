@@ -11,7 +11,6 @@
 #include "core/site_plugin.h"
 #include "core/bot_manager.h"
 #include "downloaders/n_m3u8dl_recorder.h"
-#include "utils/thumbnail_generator.h"
 #include <filesystem>
 #include <algorithm>
 #include <fstream>
@@ -1083,55 +1082,6 @@ namespace sm
             logger_->warn("Error in post-download cleanup: {}", e.what());
         }
 
-        // Generate thumbnail contact sheet if enabled and download succeeded
-        if (ok && config_)
-        {
-            try
-            {
-                if (config_->thumbnailEnabled)
-                {
-                    // Find the actual output file
-                    std::string videoFile = finalPath;
-                    auto stem = fs::path(finalPath).parent_path() / fs::path(finalPath).stem();
-                    std::string tmpTsFile = stem.string() + ".tmp.ts";
-                    if (!fs::exists(videoFile) && fs::exists(tmpTsFile))
-                        videoFile = tmpTsFile;
-
-                    if (fs::exists(videoFile) && fs::file_size(videoFile) > 0)
-                    {
-                        auto thumbPath = fs::path(videoFile);
-                        thumbPath.replace_extension(".thumb.jpg");
-
-                        sm::ThumbnailConfig tcfg;
-                        tcfg.width = config_->thumbnailWidth;
-                        tcfg.columns = config_->thumbnailColumns;
-                        tcfg.rows = config_->thumbnailRows;
-
-                        auto logCb = [this](const std::string &msg)
-                        {
-                            logger_->info("{}", msg);
-                        };
-
-                        if (sm::generateContactSheet(videoFile, thumbPath.string(), tcfg, logCb))
-                        {
-                            logger_->info("Contact sheet saved: {}", thumbPath.filename().string());
-                            // Embed as cover art only for MKV containers (in-place EBML edit).
-                            // For MP4/TS the embedThumbnailInMKV() path would remux a
-                            // duplicate .mkv next to the original, which is not desired (Issue #8).
-                            if (config_->container == ContainerFormat::MKV)
-                            {
-                                sm::embedThumbnailInMKV(videoFile, thumbPath.string(), logCb, "", false);
-                            }
-                        }
-                    }
-                }
-            }
-            catch (const std::exception &e)
-            {
-                logger_->debug("Thumbnail generation failed: {}", e.what());
-            }
-        }
-
         return ok;
     }
 
@@ -1502,52 +1452,56 @@ namespace sm
         std::string outputPath = generateOutputPath(config);
         logger_->info("Started downloading show → {}", outputPath);
 
-        // ── Dual recording: N_m3u8DL-RE (primary) + FFmpeg (secondary) ──
-        // For sites that prefer external recorder (CB), run both recorders
-        // as completely independent pipelines. N_m3u8DL-RE produces the
-        // primary output (no suffix), FFmpeg gets "_ffmpeg" suffix.
-        // FFmpeg still handles preview/audio/pause for the GUI.
-        std::thread extRecorderThread;
-        std::atomic<bool> extRecorderSuccess{false};
-        std::string extFinalPath;
-        CancellationToken extCancelToken;
+        // ── Choose recorder: N_m3u8DL-RE (external) or FFmpeg (built-in) ──
+        bool useExternal = preferExternalRecorder() &&
+                           NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string());
 
-        bool dualRecord = preferExternalRecorder() &&
-                          NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string());
-
-        std::string ffmpegOutputPath = outputPath;
-        if (dualRecord)
+        if (useExternal)
         {
-            // FFmpeg output gets "_ffmpeg" suffix; N_m3u8DL-RE keeps the original path
-            auto p = fs::path(outputPath);
-            ffmpegOutputPath = (p.parent_path() /
-                                (p.stem().string() + "_ffmpeg" + p.extension().string()))
-                                   .string();
+            // ── N_m3u8DL-RE path (CB) ───────────────────────────────
+            // Binary merge + post-mux with A/V offset correction.
+            // No FFmpeg recorder — single output file, no _ffmpeg dups.
+            std::string extUrl = getFreshStreamUrl();
+            if (extUrl.empty())
+            {
+                logger_->warn("N_m3u8DL-RE: failed to get fresh stream URL, falling back to main URL");
+                extUrl = videoUrl;
+            }
 
-            logger_->info("Dual recording: N_m3u8DL-RE (primary) → {}", outputPath);
-            logger_->info("Dual recording: FFmpeg (secondary) → {}", ffmpegOutputPath);
+            logger_->info("Recording via N_m3u8DL-RE → {}", outputPath);
 
-            extRecorderThread = std::thread(
-                [this, &config, outputPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
+            setRecording(true);
+            cancelToken_.reset();
+
+            NM3U8DLRecorder extRecorder(config);
+            extRecorder.setLogger(logger_);
+            auto res = extRecorder.record(extUrl, outputPath,
+                                          cancelToken_, config.userAgent);
+
+            setRecording(false);
+
+            std::string finalPath = res.outputPath.empty() ? outputPath : res.outputPath;
+            bool ok = res.success;
+            ok = postDownloadCleanup(finalPath, ok);
+
+            if (ok)
+            {
+                std::error_code fec;
+                if (fs::exists(finalPath, fec))
                 {
-                    // Fetch a fresh HLS URL with a new session token.
-                    // CB tokens are session-bound — reusing the main
-                    // recorder's token causes 403 Forbidden.
-                    std::string extUrl = getFreshStreamUrl();
-                    if (extUrl.empty())
-                    {
-                        logger_->warn("N_m3u8DL-RE: failed to get fresh stream URL");
-                        return;
-                    }
-                    logger_->info("N_m3u8DL-RE: got fresh URL for recording");
+                    auto fileSize = fs::file_size(finalPath, fec);
+                    logger_->info("N_m3u8DL-RE recording ended: {} ({} bytes)",
+                                  finalPath, fileSize);
+                    std::lock_guard lock(stateMutex_);
+                    state_.totalBytes += fileSize;
+                }
+            }
+            else
+            {
+                logger_->warn("N_m3u8DL-RE recording failed");
+            }
 
-                    NM3U8DLRecorder extRecorder(config);
-                    extRecorder.setLogger(logger_);
-                    auto res = extRecorder.record(extUrl, outputPath,
-                                                  extCancelToken, config.userAgent);
-                    extRecorderSuccess.store(res.success);
-                    extFinalPath = res.outputPath.empty() ? outputPath : res.outputPath;
-                });
+            return ok;
         }
 
         // ── Built-in FFmpeg HLS recorder ─────────────────────────────
@@ -1557,10 +1511,6 @@ namespace sm
         recorder.setLogger(logger_);
 
         // ── Continuous preview from the live stream ─────────────────
-        // Recorder pushes EVERY decoded RGBA frame.  We queue them
-        // and a pump function drains the queue at a steady rate so
-        // the GUI sees smooth video instead of bursty segment dumps.
-        // Only enabled when enablePreviewCapture is true (saves CPU).
         if (config.enablePreviewCapture)
         {
             recorder.setPreviewDataCallback([this](std::vector<uint8_t> rgba, int w, int h)
@@ -1571,24 +1521,19 @@ namespace sm
                 f.width  = w;
                 f.height = h;
                 previewQueue_.push_back(std::move(f));
-                // Cap queue so memory doesn't grow unbounded
                 while (previewQueue_.size() > kMaxPreviewQueue)
                     previewQueue_.pop_front();
                 previewCv_.notify_all(); });
         }
 
         // ── Audio forwarding ────────────────────────────────────────
-        // Recorder pushes f32 stereo 48kHz PCM. Forward to whoever
-        // registered the audio callback (typically the GUI AudioPlayer).
         recorder.setAudioDataCallback([this](const float *samples, size_t frameCount)
                                       {
             std::lock_guard lock(audioMutex_);
             if (audioDataCb_)
                 audioDataCb_(samples, frameCount); });
 
-        // Set pause/resume callback — when the stream ends (model goes
-        // private/offline), keep the output file open and poll for the
-        // model to come back. Avoids creating a new file each time.
+        // Set pause/resume callback
         bool pauseNotified = false;
         recorder.setPauseResumeCallback([this, &config, &pauseNotified]() -> PauseResumeResult
                                         {
@@ -1606,7 +1551,6 @@ namespace sm
                 return {PauseAction::Wait, ""};
             }
 
-            // Update visible state so UI reflects current status
             setState(status);
 
             if (!pauseNotified)
@@ -1618,7 +1562,6 @@ namespace sm
 
             if (status == Status::Public)
             {
-                // Model is back! Get fresh video URL
                 try
                 {
                     std::string url = getVideoUrl();
@@ -1637,7 +1580,6 @@ namespace sm
                 return {PauseAction::Wait, ""};
             }
 
-            // Keep waiting for recoverable statuses
             if (status == Status::Private || status == Status::Online ||
                 status == Status::Offline || status == Status::LongOffline ||
                 status == Status::RateLimit || status == Status::Cloudflare ||
@@ -1647,17 +1589,12 @@ namespace sm
                 return {PauseAction::Wait, ""};
             }
 
-            // Stop permanently only for terminal statuses.
             if (status == Status::NotExist || status == Status::Deleted)
                 return {PauseAction::Stop, ""};
 
-            // Unknown/unexpected status: keep waiting to preserve append behavior.
             return {PauseAction::Wait, ""}; });
 
         // ── Status check for SegmentFeeder early abort ────────────
-        // When consecutive segment downloads fail, the feeder calls
-        // this to check if the model went private/offline so it can
-        // abort immediately instead of grinding through 30 errors.
         recorder.setStatusCheckCallback([this]() -> Status
                                         { return checkStatus(); });
 
@@ -1665,22 +1602,17 @@ namespace sm
         chunkReached_.store(false);
 
         // ── Chunk-limit tracking ────────────────────────────────────
-        // For chunked recording modes, we monitor progress and cancel
-        // the token when the size/duration limit is reached.
         auto chunkStartTime = std::chrono::steady_clock::now();
         recorder.setProgressCallback([this, &config, chunkStartTime](const RecordingProgress &prog)
                                      {
-            // Update stats silently (same as before)
             {
                 std::lock_guard lock(stateMutex_);
                 state_.recordingStats.bytesWritten = prog.bytesWritten;
                 state_.recordingStats.currentSpeed = prog.speed;
             }
 
-            // Check chunk limits
             if (config.recordingMode == 1)
             {
-                // Chunked by file size
                 uint64_t limitBytes = static_cast<uint64_t>(config.chunkSizeMB) * 1024ULL * 1024ULL;
                 if (prog.bytesWritten >= limitBytes)
                 {
@@ -1690,7 +1622,6 @@ namespace sm
             }
             else if (config.recordingMode == 2)
             {
-                // Chunked by duration
                 auto elapsed = std::chrono::steady_clock::now() - chunkStartTime;
                 auto elapsedMin = std::chrono::duration_cast<std::chrono::minutes>(elapsed).count();
                 if (elapsedMin >= config.chunkDurationMin)
@@ -1699,15 +1630,10 @@ namespace sm
                     cancelToken_.cancel();
                 }
             } });
-        // changes (e.g. model switches mobile↔desktop), close the current
-        // file and start a new one in the appropriate subfolder.
-        // Mobile detection is ALWAYS from the actual stream resolution
-        // (portrait = isPortraitStream: h > w, ratio < 0.85).
-        // The site API's isMobile flag is NEVER trusted for this.
-        recorder.setResolutionChangeCallback([this, &config, dualRecord](const ResolutionInfo &ri) -> std::string
+
+        // ── Resolution change → mobile detection ────────────────────
+        recorder.setResolutionChangeCallback([this, &config](const ResolutionInfo &ri) -> std::string
                                              {
-            // VR sites (slug ends with "VR") are NEVER mobile — ignore
-            // portrait detection for them.
             bool vrSite = siteSlug_.size() >= 2 &&
                           siteSlug_.compare(siteSlug_.size() - 2, 2, "VR") == 0;
             bool mobile = ri.isMobile && !vrSite;
@@ -1717,71 +1643,28 @@ namespace sm
                           ri.source == ResolutionInfo::Source::MasterPlaylist
                               ? "master-playlist" : "codec-params");
 
-            // Update mobile state from the actual video resolution.
-            // This is the ONLY source of truth for mobile detection.
             setMobile(mobile);
+            return generateOutputPath(config); });
 
-            // Generate a new output path (picks up the Mobile subfolder change)
-            auto newPath = generateOutputPath(config);
-            if (dualRecord)
-            {
-                auto np = fs::path(newPath);
-                newPath = (np.parent_path() /
-                          (np.stem().string() + "_ffmpeg" + np.extension().string()))
-                             .string();
-            }
-            return newPath; });
-
-        // Pass masterUrl for SegmentFeeder orientation monitoring.
-        // The feeder will periodically re-fetch the master m3u8 and
-        // detect portrait↔landscape changes from RESOLUTION= tags.
-        auto result = recorder.record(videoUrl, ffmpegOutputPath, cancelToken_,
+        auto result = recorder.record(videoUrl, outputPath, cancelToken_,
                                       config.userAgent, "", {}, {}, masterUrl());
 
         setRecording(false);
-
-        // ── Stop N_m3u8DL-RE primary recorder ───────────────────────────
-        if (dualRecord && extRecorderThread.joinable())
-        {
-            extCancelToken.cancel();
-            extRecorderThread.join();
-
-            if (extRecorderSuccess.load() && !extFinalPath.empty())
-            {
-                postDownloadCleanup(extFinalPath, true);
-                std::error_code ec;
-                if (fs::exists(extFinalPath, ec))
-                {
-                    auto extSize = fs::file_size(extFinalPath, ec);
-                    logger_->info("N_m3u8DL-RE (primary) finished: {} ({} bytes)",
-                                  extFinalPath, extSize);
-                    std::lock_guard lock(stateMutex_);
-                    state_.totalBytes += extSize;
-                }
-            }
-            else
-            {
-                logger_->debug("N_m3u8DL-RE recorder did not produce output");
-            }
-        }
 
         // Clean up split-audio temp master playlist file (if any)
         cleanupSplitAudioTempFile();
 
         bool ok = result.success;
+        ok = postDownloadCleanup(outputPath, ok);
 
-        // Post-download cleanup for FFmpeg output
-        ok = postDownloadCleanup(ffmpegOutputPath, ok);
-
-        // Update total bytes
         if (ok)
         {
-            std::error_code ec;
-            if (fs::exists(ffmpegOutputPath, ec))
+            std::error_code fec;
+            if (fs::exists(outputPath, fec))
             {
-                auto fileSize = fs::file_size(ffmpegOutputPath, ec);
+                auto fileSize = fs::file_size(outputPath, fec);
                 logger_->info("FFmpeg recording ended: {} ({} bytes)",
-                              ffmpegOutputPath, fileSize);
+                              outputPath, fileSize);
                 std::lock_guard lock(stateMutex_);
                 state_.totalBytes += fileSize;
             }

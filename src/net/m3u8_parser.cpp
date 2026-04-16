@@ -188,7 +188,10 @@ namespace sm
                     audio.name = extractAttribute(line, "NAME");
                     std::string uri = extractAttribute(line, "URI");
                     if (!uri.empty())
+                    {
                         audio.uri = resolveUrl(baseUrl, uri);
+                        audio.uri = inheritQueryParams(baseUrl, audio.uri);
+                    }
                     audio.rawLine = line;
                     master.audioRenditions.push_back(std::move(audio));
                 }
@@ -238,6 +241,7 @@ namespace sm
                     if (!line.empty() && line.back() == '\r')
                         line.pop_back();
                     variant.url = resolveUrl(baseUrl, line);
+                    variant.url = inheritQueryParams(baseUrl, variant.url);
                 }
 
                 if (!variant.url.empty())

@@ -224,6 +224,14 @@ namespace sm
         if (url.empty())
             return "";
 
+        // Keep URL normalization consistent with getVideoUrl().
+        // N_m3u8DL-RE still receives a master URL (no selectResolution),
+        // but for non-LLHLS streams we should use the CMAF master if present.
+        bool isLlhls = url.find("/llhls.m3u8") != std::string::npos ||
+                       url.find("/v1/edge/streams/") != std::string::npos;
+        if (!isLlhls && lastInfo_.contains("_cmaf_url"))
+            url = lastInfo_["_cmaf_url"].get<std::string>();
+
         // N_m3u8DL-RE does its own resolution selection (--auto-select),
         // so return the raw master URL — don't call selectResolution().
         return url;
