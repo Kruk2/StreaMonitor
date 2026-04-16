@@ -84,6 +84,7 @@ static std::shared_ptr<sm::ImGuiLogSink> initLogging()
     auto logger = std::make_shared<spdlog::logger>("sm",
                                                    spdlog::sinks_init_list{console, file, guiSink, g_logRingBuffer});
     logger->set_level(spdlog::level::info);
+    logger->flush_on(spdlog::level::info);
     spdlog::set_default_logger(logger);
 
     spdlog::info("StreaMonitor v2.0 starting (GUI mode)");

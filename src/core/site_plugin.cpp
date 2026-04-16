@@ -11,9 +11,7 @@
 #include "core/site_plugin.h"
 #include "core/bot_manager.h"
 #include "downloaders/n_m3u8dl_recorder.h"
-#include "gui/imgui_log_sink.h"
 #include "utils/thumbnail_generator.h"
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <filesystem>
 #include <algorithm>
 #include <fstream>
@@ -99,17 +97,14 @@ namespace sm
     {
         std::string logName = username + " [" + siteSlug + "]";
 
-        // Build sink list: console + ImGui GUI sink (if available)
-        auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-        std::vector<spdlog::sink_ptr> sinks = {consoleSink};
-        if (auto guiSink = ImGuiLogSink::instance())
-            sinks.push_back(guiSink);
+        const auto &sinks = spdlog::default_logger()->sinks();
 
         // Unique registry name (pointer suffix) — logName used for display
         std::string registryName = logName + "_" +
                                    std::to_string(reinterpret_cast<uintptr_t>(this));
         logger_ = std::make_shared<spdlog::logger>(registryName, sinks.begin(), sinks.end());
         logger_->set_level(spdlog::get_level()); // inherit global log level
+        logger_->flush_on(spdlog::level::info);
         logger_->set_pattern("[%H:%M:%S] [" + logName + "] %v");
         spdlog::register_logger(logger_);
 

@@ -87,6 +87,7 @@ static void initLogging()
     auto logger = std::make_shared<spdlog::logger>("sm",
                                                    spdlog::sinks_init_list{console, file, g_logRingBuffer});
     logger->set_level(spdlog::level::info);
+    logger->flush_on(spdlog::level::info);
     spdlog::set_default_logger(logger);
 }
 
