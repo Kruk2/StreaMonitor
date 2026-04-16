@@ -49,6 +49,7 @@
 extern "C"
 {
 #include <libavformat/avformat.h>
+#include <libavutil/log.h>
 }
 
 static std::atomic<bool> g_shutdown{false};
@@ -76,6 +77,22 @@ static void initLogging()
                                                    spdlog::sinks_init_list{console, file, g_logRingBuffer});
     logger->set_level(spdlog::level::info);
     spdlog::set_default_logger(logger);
+}
+
+static void relocateLogFile(const std::filesystem::path &configDir)
+{
+    auto logPath = (configDir / "streamonitor.log").string();
+    auto console = spdlog::default_logger()->sinks()[0];
+    auto newFile = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+        logPath, 10 * 1024 * 1024, 3);
+    newFile->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] %v");
+    newFile->set_level(spdlog::default_logger()->level());
+
+    auto logger = std::make_shared<spdlog::logger>("sm",
+                                                   spdlog::sinks_init_list{console, newFile, g_logRingBuffer});
+    logger->set_level(spdlog::default_logger()->level());
+    spdlog::set_default_logger(logger);
+    spdlog::info("Log file: {}", logPath);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -246,6 +263,7 @@ try
     spdlog::info("StreaMonitor v2.0 starting (CLI mode)");
 
     avformat_network_init();
+    av_log_set_level(AV_LOG_WARNING);
     sm::HttpClient::globalInit();
 
     // Load config
@@ -259,6 +277,9 @@ try
         config.loadFromFile(appConfigPath);
         spdlog::info("Loaded app settings from {}", appConfigPath.string());
     }
+
+    // Move log file into configDir so it's accessible via Docker volume
+    relocateLogFile(config.configDir);
 
     // Apply configured log level globally
     {

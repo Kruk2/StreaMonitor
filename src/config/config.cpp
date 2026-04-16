@@ -65,6 +65,8 @@ namespace sm
             return Status::Cloudflare;
         if (s == "LONG_OFFLINE")
             return Status::LongOffline;
+        if (s == "PAUSED" || s == "Paused" || s == "NOT_RUNNING" || s == "Not Running")
+            return Status::NotRunning;
         return Status::Unknown;
     }
 

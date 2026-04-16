@@ -1487,11 +1487,11 @@ namespace sm
         std::string outputPath = generateOutputPath(config);
         logger_->info("Started downloading show → {}", outputPath);
 
-        // ── Dual recording: N_m3u8DL-RE companion + built-in FFmpeg ──
-        // For sites that prefer external recorder (CB), run N_m3u8DL-RE
-        // alongside the built-in FFmpeg recorder for A/V sync coverage.
-        // N_m3u8DL-RE writes to a separate file (same name + "_ext" suffix).
-        // The built-in recorder is the primary (handles preview/audio/pause).
+        // ── Dual recording: N_m3u8DL-RE (primary) + FFmpeg (secondary) ──
+        // For sites that prefer external recorder (CB), run both recorders
+        // as completely independent pipelines. N_m3u8DL-RE produces the
+        // primary output (no suffix), FFmpeg gets "_ffmpeg" suffix.
+        // FFmpeg still handles preview/audio/pause for the GUI.
         std::thread extRecorderThread;
         std::atomic<bool> extRecorderSuccess{false};
         std::string extFinalPath;
@@ -1500,13 +1500,14 @@ namespace sm
         bool dualRecord = preferExternalRecorder() &&
                           NM3U8DLRecorder::isAvailable(config.n_m3u8dlPath.string());
 
+        std::string ffmpegOutputPath = outputPath;
         if (dualRecord)
         {
-            // Build a distinct output path for the external recorder
+            // FFmpeg output gets "_ffmpeg" suffix; N_m3u8DL-RE keeps the original path
             auto p = fs::path(outputPath);
-            std::string extOutPath = (p.parent_path() /
-                                      (p.stem().string() + "_ext" + p.extension().string()))
-                                         .string();
+            ffmpegOutputPath = (p.parent_path() /
+                                (p.stem().string() + "_ffmpeg" + p.extension().string()))
+                                   .string();
 
             // N_m3u8DL-RE works best with the original master URL (it does
             // its own resolution selection via --sv best / --sa best).
@@ -1515,17 +1516,18 @@ namespace sm
             if (extUrl.empty())
                 extUrl = videoUrl; // fallback
 
-            logger_->info("Dual recording: N_m3u8DL-RE companion → {}", extOutPath);
+            logger_->info("Dual recording: N_m3u8DL-RE (primary) → {}", outputPath);
+            logger_->info("Dual recording: FFmpeg (secondary) → {}", ffmpegOutputPath);
 
             extRecorderThread = std::thread(
-                [this, &config, extUrl, extOutPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
+                [this, &config, extUrl, outputPath, &extCancelToken, &extRecorderSuccess, &extFinalPath]()
                 {
                     NM3U8DLRecorder extRecorder(config);
                     extRecorder.setLogger(logger_);
-                    auto res = extRecorder.record(extUrl, extOutPath,
+                    auto res = extRecorder.record(extUrl, outputPath,
                                                   extCancelToken, config.userAgent);
                     extRecorderSuccess.store(res.success);
-                    extFinalPath = res.outputPath.empty() ? extOutPath : res.outputPath;
+                    extFinalPath = res.outputPath.empty() ? outputPath : res.outputPath;
                 });
         }
 
@@ -1683,7 +1685,7 @@ namespace sm
         // Mobile detection is ALWAYS from the actual stream resolution
         // (portrait = isPortraitStream: h > w, ratio < 0.85).
         // The site API's isMobile flag is NEVER trusted for this.
-        recorder.setResolutionChangeCallback([this, &config](const ResolutionInfo &ri) -> std::string
+        recorder.setResolutionChangeCallback([this, &config, dualRecord](const ResolutionInfo &ri) -> std::string
                                              {
             // VR sites (slug ends with "VR") are NEVER mobile — ignore
             // portrait detection for them.
@@ -1701,17 +1703,25 @@ namespace sm
             setMobile(mobile);
 
             // Generate a new output path (picks up the Mobile subfolder change)
-            return generateOutputPath(config); });
+            auto newPath = generateOutputPath(config);
+            if (dualRecord)
+            {
+                auto np = fs::path(newPath);
+                newPath = (np.parent_path() /
+                          (np.stem().string() + "_ffmpeg" + np.extension().string()))
+                             .string();
+            }
+            return newPath; });
 
         // Pass masterUrl for SegmentFeeder orientation monitoring.
         // The feeder will periodically re-fetch the master m3u8 and
         // detect portrait↔landscape changes from RESOLUTION= tags.
-        auto result = recorder.record(videoUrl, outputPath, cancelToken_,
+        auto result = recorder.record(videoUrl, ffmpegOutputPath, cancelToken_,
                                       config.userAgent, "", {}, {}, masterUrl());
 
         setRecording(false);
 
-        // ── Stop dual-recording companion ─────────────────────────────
+        // ── Stop N_m3u8DL-RE primary recorder ───────────────────────────
         if (dualRecord && extRecorderThread.joinable())
         {
             extCancelToken.cancel();
@@ -1724,7 +1734,7 @@ namespace sm
                 if (fs::exists(extFinalPath, ec))
                 {
                     auto extSize = fs::file_size(extFinalPath, ec);
-                    logger_->info("Ext recorder finished: {} ({} bytes)",
+                    logger_->info("N_m3u8DL-RE (primary) finished: {} ({} bytes)",
                                   extFinalPath, extSize);
                     std::lock_guard lock(stateMutex_);
                     state_.totalBytes += extSize;
@@ -1732,7 +1742,7 @@ namespace sm
             }
             else
             {
-                logger_->debug("Ext recorder did not produce output");
+                logger_->debug("N_m3u8DL-RE recorder did not produce output");
             }
         }
 
@@ -1741,25 +1751,25 @@ namespace sm
 
         bool ok = result.success;
 
-        // Post-download cleanup (Python: _post_download_cleanup)
-        ok = postDownloadCleanup(outputPath, ok);
+        // Post-download cleanup for FFmpeg output
+        ok = postDownloadCleanup(ffmpegOutputPath, ok);
 
         // Update total bytes
         if (ok)
         {
             std::error_code ec;
-            if (fs::exists(outputPath, ec))
+            if (fs::exists(ffmpegOutputPath, ec))
             {
-                auto fileSize = fs::file_size(outputPath, ec);
-                logger_->info("Recording ended successfully: {} ({} bytes)",
-                              outputPath, fileSize);
+                auto fileSize = fs::file_size(ffmpegOutputPath, ec);
+                logger_->info("FFmpeg recording ended: {} ({} bytes)",
+                              ffmpegOutputPath, fileSize);
                 std::lock_guard lock(stateMutex_);
                 state_.totalBytes += fileSize;
             }
         }
         else
         {
-            logger_->warn("Recording failed");
+            logger_->warn("FFmpeg recording failed");
         }
 
         return ok;

@@ -12,7 +12,7 @@ namespace sm
         case Status::Unknown:
             return "Unknown";
         case Status::NotRunning:
-            return "Not Running";
+            return "Paused";
         case Status::Error:
             return "Error";
         case Status::ConnectionError:

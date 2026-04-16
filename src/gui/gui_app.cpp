@@ -1915,7 +1915,7 @@ namespace sm
         ImGui::SameLine();
         ImGui::SetNextItemWidth(150 * dpiScale_);
         const char *statusFilters[] = {"All Status", "Public", "Recording", "Private",
-                                       "Offline", "Error", "Not Running"};
+                                       "Offline", "Error", "Paused"};
         ImGui::Combo("##StatusFilter", &filterStatus_, statusFilters,
                      IM_ARRAYSIZE(statusFilters));
 
@@ -6075,7 +6075,7 @@ namespace sm
         case Status::Deleted:
             return COL_RED;
         case Status::NotRunning:
-            return {0.40f, 0.40f, 0.45f, 1.0f};
+            return {0.45f, 0.50f, 0.65f, 1.0f};
         default:
             return COL_YELLOW;
         }
@@ -6103,7 +6103,7 @@ namespace sm
         case Status::Deleted:
             return "[DEL]";
         case Status::NotRunning:
-            return "[---]";
+            return "[PAU]";
         case Status::Cloudflare:
             return "[CF]";
         default:

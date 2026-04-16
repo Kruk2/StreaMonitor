@@ -281,6 +281,7 @@ body {
 .status-dot.online, .status-dot.public { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.4); }
 .status-dot.offline { background: #f59e0b; }
 .status-dot.stopped { background: #3f3f5c; }
+.status-dot.paused { background: #3b82f6; box-shadow: 0 0 4px rgba(59, 130, 246, 0.3); }
 .status-dot.error { background: #f97316; }
 
 /* ── Badge-status ─────────────────────────────────────────── */

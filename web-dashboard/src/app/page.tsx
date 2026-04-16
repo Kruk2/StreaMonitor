@@ -41,7 +41,7 @@ type TabId = 'models' | 'groups' | 'logs' | 'settings'
 
 function statusDotClass(bot: BotState): string {
   if (bot.recording) return 'recording'
-  if (!bot.running) return 'stopped'
+  if (!bot.running) return 'paused'
   if (bot.status === 'Public' || bot.status === 'Online') return 'online'
   if (bot.status === 'Offline' || bot.status === 'Long Offline') return 'offline'
   if (bot.consecutiveErrors > 0) return 'error'
@@ -57,7 +57,10 @@ function statusBadge(bot: BotState): { label: string; color: string } {
     case 'Offline': return { label: 'Offline', color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25' }
     case 'Long Offline': return { label: 'Offline', color: 'bg-zinc-500/15 text-zinc-500 border-zinc-500/25' }
     case 'Error': return { label: 'Error', color: 'bg-red-500/15 text-red-400 border-red-500/25' }
-    default: return { label: bot.running ? bot.status || 'Unknown' : 'Stopped', color: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20' }
+    case 'Paused': return { label: 'Paused', color: 'bg-blue-500/15 text-blue-400 border-blue-500/25' }
+    default:
+      if (!bot.running) return { label: 'Paused', color: 'bg-blue-500/15 text-blue-400 border-blue-500/25' }
+      return { label: bot.status || 'Unknown', color: 'bg-zinc-500/10 text-zinc-500 border-zinc-500/20' }
   }
 }
 
@@ -876,7 +879,7 @@ export default function Dashboard() {
   const [sites, setSites] = useState<SiteInfo[]>([])
   const [groups, setGroups] = useState<GroupInfo[]>([])
   const [disk, setDisk] = useState<DiskUsage | null>(null)
-  const [filter, setFilter] = useState<'all' | 'recording' | 'online' | 'offline'>('all')
+  const [filter, setFilter] = useState<'all' | 'recording' | 'online' | 'offline' | 'paused'>('all')
   const [search, setSearch] = useState('')
   const [showAdd, setShowAdd] = useState(false)
   const [selectedBot, setSelectedBot] = useState<BotState | null>(null)
@@ -945,7 +948,8 @@ export default function Dashboard() {
     .filter(m => {
       if (filter === 'recording') return m.recording
       if (filter === 'online') return m.status === 'Public' || m.status === 'Online'
-      if (filter === 'offline') return !m.running || m.status === 'Offline' || m.status === 'Long Offline'
+      if (filter === 'offline') return m.running && (m.status === 'Offline' || m.status === 'Long Offline')
+      if (filter === 'paused') return !m.running
       return true
     })
     .filter(m => !search ||
@@ -1036,7 +1040,7 @@ export default function Dashboard() {
         {tab === 'models' && (
           <>
             <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[var(--border-subtle)] flex-shrink-0 flex-wrap">
-              {(['all', 'recording', 'online', 'offline'] as const).map(f => (
+              {(['all', 'recording', 'online', 'offline', 'paused'] as const).map(f => (
                 <button key={f} onClick={() => setFilter(f)}
                   className={`filter-pill ${filter === f ? 'active' : ''}`}>
                   {f === 'recording' ? `\u25cf Rec${recCount > 0 ? ` ${recCount}` : ''}` : f.charAt(0).toUpperCase() + f.slice(1)}
