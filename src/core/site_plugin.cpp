@@ -338,9 +338,9 @@ namespace sm
     std::string SitePlugin::getFreshStreamUrl()
     {
         auto status = checkStatus();
-        if (status != Status::Online)
+        if (!statusIsRecordable(status))
         {
-            logger_->warn("getFreshStreamUrl: model not online ({})", static_cast<int>(status));
+            logger_->warn("getFreshStreamUrl: model not recordable ({})", statusToString(status));
             return "";
         }
         // Save masterUrl — getVideoUrl() calls selectResolution() which

@@ -208,4 +208,25 @@ namespace sm
         return selectResolution(url);
     }
 
+    std::string Chaturbate::getFreshStreamUrl()
+    {
+        auto status = checkStatus();
+        if (!statusIsRecordable(status))
+        {
+            logger_->warn("getFreshStreamUrl: model not recordable ({})", statusToString(status));
+            return "";
+        }
+
+        if (lastInfo_.empty() || !lastInfo_.contains("url"))
+            return "";
+
+        std::string url = lastInfo_.value("url", "");
+        if (url.empty())
+            return "";
+
+        // N_m3u8DL-RE does its own resolution selection (--auto-select),
+        // so return the raw master URL — don't call selectResolution().
+        return url;
+    }
+
 } // namespace sm

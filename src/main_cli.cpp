@@ -306,18 +306,8 @@ try
     // Create manager
     sm::BotManager manager(config, configStore);
 
-    // Load bots from config
-    for (const auto &mc : configStore.getAll())
-    {
-        try
-        {
-            manager.addBot(mc.username, mc.site);
-        }
-        catch (const std::exception &e)
-        {
-            spdlog::warn("Skip {}: {}", mc.username, e.what());
-        }
-    }
+    // Load bots from config (respects per-model running flag for autoStart)
+    manager.loadFromConfig();
 
     // Auto-start
     bool autostart = true;

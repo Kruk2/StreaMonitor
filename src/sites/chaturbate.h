@@ -27,6 +27,7 @@ namespace sm
         }
         bool supportsBulkUpdate() const override { return true; }
         bool preferExternalRecorder() const override { return true; }
+        std::string getFreshStreamUrl() override;
 
         std::pair<std::string, std::vector<std::string>> getSiteColor() const override
         {
